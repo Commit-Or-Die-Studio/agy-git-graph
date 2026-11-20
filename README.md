@@ -86,17 +86,19 @@ scripts\start.bat
 
 ---
 
-## 📦 發布至 AGY 全域擴充 / Release to AGY
+## 📦 安裝與解除安裝 / Install & Uninstall
 
-當測試完成並準備讓 AGY 所有專案在側邊欄直接使用時：
+專案根目錄已提供一鍵執行的批次檔：
 
-1. **執行發布腳本**：  
-   雙擊執行 `scripts\deploy-global.bat`（腳本會自動將外掛發布至 `~/.gemini/config/plugins/agy-git-graph/`）。
-2. **在 AGY 中開啟**：  
-   發布完成後，在 AGY 任何對話或筆記中點擊下方連結，即可在右側輔助面板開啟 Git Graph：
-   ```markdown
-   [Git Graph](sidecar://agy-git-graph/git_graph_server/)
-   ```
+### 1. 一鍵安裝 (Install)
+雙擊執行專案根目錄的 **`install.bat`**：
+* 自動將外掛發布至 AGY 全域擴充目錄（`~/.gemini/config/plugins/agy-git-graph/`）。
+* 開啟或重啟 AGY 桌面版，點擊右側 `Extensions` -> `Git Graph` 即可使用。
+
+### 2. 一鍵解除安裝 (Uninstall)
+雙擊執行專案根目錄的 **`uninstall.bat`**：
+* 自動關閉可能佔用中的背景 Sidecar 伺服器。
+* 乾淨移除全域擴充目錄中的檔案與資料夾，不留任何垃圾殘留。
 
 ---
 

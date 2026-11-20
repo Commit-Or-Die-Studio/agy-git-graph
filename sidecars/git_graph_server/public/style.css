@@ -60,14 +60,26 @@ body, html {
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  cursor: pointer;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.repo-info:hover .repo-name {
-  color: var(--accent-color);
+.project-dropdown {
+  background: var(--bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 220px;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+}
+
+.project-dropdown:hover, .project-dropdown:focus {
+  border-color: var(--accent-color);
 }
 
 .repo-icon {

@@ -11,9 +11,11 @@
     <!-- 頂部工具列 (Toolbar) -->
     <header class="toolbar">
       <div class="toolbar-row top-row">
-        <div class="repo-info" id="repo-info-btn" title="點擊更換 Repository">
+        <div class="repo-info">
           <span class="repo-icon">📂</span>
-          <span class="repo-name" id="repo-name">載入中...</span>
+          <select id="project-select" class="project-dropdown" title="切換 AGY 專案">
+            <option value="">載入專案中...</option>
+          </select>
           <span class="branch-pill" id="current-branch-badge">HEAD</span>
         </div>
         <div class="toolbar-actions">

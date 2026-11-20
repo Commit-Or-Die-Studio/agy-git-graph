@@ -10,8 +10,53 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// 初始預設倉庫路徑（取當前工作目錄或上層專案根目錄）
-let currentRepoPath = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../../');
+// 初始預設倉庫路徑（自動尋找當前工作區或 AGY 已註冊的 Git 專案）
+function getAgyProjects() {
+  const projects = [];
+  const configProjectsDir = path.join(process.env.USERPROFILE || '', '.gemini', 'config', 'projects');
+  if (fs.existsSync(configProjectsDir)) {
+    try {
+      const files = fs.readdirSync(configProjectsDir);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          try {
+            const raw = fs.readFileSync(path.join(configProjectsDir, file), 'utf8');
+            const data = JSON.parse(raw);
+            if (data.projectResources && Array.isArray(data.projectResources.resources)) {
+              for (const res of data.projectResources.resources) {
+                if (res.folderUri) {
+                  let p = res.folderUri.replace(/^file:\/\/\//, '');
+                  p = decodeURIComponent(p);
+                  if (/^[a-zA-Z]:/.test(p)) {
+                    p = p.charAt(0).toUpperCase() + p.slice(1);
+                  }
+                  p = path.normalize(p);
+                  const isGit = fs.existsSync(path.join(p, '.git'));
+                  projects.push({
+                    id: data.id,
+                    name: data.name,
+                    path: p,
+                    isGit
+                  });
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  return projects;
+}
+
+function resolveInitialRepo() {
+  if (process.env.WORKSPACE_ROOT && fs.existsSync(path.join(process.env.WORKSPACE_ROOT, '.git'))) {
+    return process.env.WORKSPACE_ROOT;
+  }
+  return '';
+}
+
+let currentRepoPath = resolveInitialRepo();
 
 // 解析 CLI 參數與環境變數取得 Port
 function getPort() {
@@ -198,15 +243,29 @@ const server = http.createServer(async (req, res) => {
   // 取得 query 參數中指定的 repo，若無則使用 currentRepoPath
   const queryRepo = reqUrl.searchParams.get('repo') || currentRepoPath;
 
+  // API: 取得 AGY 註冊專案清單
+  if (pathname === '/api/projects' && req.method === 'GET') {
+    const projects = getAgyProjects();
+    return sendJson(res, { ok: true, projects, currentRepo: currentRepoPath });
+  }
+
   // API: 倉庫狀態檢查
   if (pathname === '/api/status' && req.method === 'GET') {
+    if (!queryRepo) {
+      return sendJson(res, {
+        ok: true,
+        isGit: false,
+        repoPath: '',
+        error: '當前對話工作區無 Git 倉庫'
+      });
+    }
     const isGit = await runGit(['rev-parse', '--is-inside-work-tree'], queryRepo);
     if (!isGit.ok) {
       return sendJson(res, {
-        ok: false,
+        ok: true,
         isGit: false,
         repoPath: queryRepo,
-        error: isGit.error || 'Not a git repository'
+        error: '當前對話工作區無 Git 倉庫'
       });
     }
 

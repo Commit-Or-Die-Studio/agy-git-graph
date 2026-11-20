@@ -17,7 +17,7 @@
   const PADDING_LEFT = 14;
 
   // 狀態變數
-  let currentRepo = localStorage.getItem('agy_git_graph_repo') || '';
+  let currentRepo = '';
   let allCommits = [];
   let allLinks = [];
   let maxLanes = 1;
@@ -26,8 +26,7 @@
 
   // DOM 元素快取
   const $ = (id) => document.getElementById(id);
-  const repoNameEl = $('repo-name');
-  const repoInfoBtn = $('repo-info-btn');
+  const projectSelect = $('project-select');
   const branchBadgeEl = $('current-branch-badge');
   const workingTreeStatusEl = $('working-tree-status');
   const commitsCountEl = $('commits-count');
@@ -84,6 +83,44 @@
     return url.toString();
   }
 
+  // 載入 AGY 專案清單並填入下拉選單
+  async function loadProjects() {
+    try {
+      const res = await fetch('/api/projects').then(r => r.json());
+      if (res.ok && Array.isArray(res.projects)) {
+        projectSelect.innerHTML = '';
+        let hasSelected = false;
+
+        res.projects.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.path;
+          opt.textContent = `📁 ${p.name}${p.isGit ? '' : ' (非Git)'}`;
+          if (currentRepo && currentRepo.toLowerCase().replace(/\\/g, '/') === p.path.toLowerCase().replace(/\\/g, '/')) {
+            opt.selected = true;
+            hasSelected = true;
+          }
+          projectSelect.appendChild(opt);
+        });
+
+        // 若當前工作區不在專案內，顯示提示
+        if (!hasSelected) {
+          const noneOpt = document.createElement('option');
+          noneOpt.value = '';
+          noneOpt.textContent = '📂 (無關聯專案)';
+          noneOpt.selected = true;
+          projectSelect.insertBefore(noneOpt, projectSelect.firstChild);
+        }
+
+        const customOpt = document.createElement('option');
+        customOpt.value = '__custom__';
+        customOpt.textContent = '➕ 自訂本機路徑...';
+        projectSelect.appendChild(customOpt);
+      }
+    } catch (err) {
+      console.warn('載入專案清單失敗:', err);
+    }
+  }
+
   // 載入倉庫狀態與分支清單
   async function loadRepoMeta() {
     try {
@@ -93,21 +130,33 @@
       ]);
 
       if (!statusRes.ok || !statusRes.isGit) {
-        repoNameEl.textContent = '非 Git 倉庫';
-        branchBadgeEl.textContent = 'None';
-        workingTreeStatusEl.textContent = statusRes.error || '未偵測到有效倉庫';
-        repoSwitchBar.classList.remove('hidden');
+        branchBadgeEl.textContent = '無';
+        workingTreeStatusEl.innerHTML = '<span style="color:#6c7086;">● 當前對話無 Git 倉庫</span>';
+        commitsCountEl.textContent = '0 commits';
+        commitList.innerHTML = '';
+        graphSvg.innerHTML = '';
+        loadingState.classList.add('hidden');
+        emptyState.classList.remove('hidden');
+        emptyState.innerHTML = '<p style="font-size:14px;color:#a6adc8;margin-bottom:6px;">📂 當前對話工作區無 Git 倉庫</p><p style="font-size:12px;color:#6c7086;">切換至已開啟 Git 倉庫的專案對話時將自動顯示</p>';
         return false;
       }
 
       currentRepo = statusRes.repoPath;
-      localStorage.setItem('agy_git_graph_repo', currentRepo);
       repoPathInput.value = currentRepo;
+      repoSwitchBar.classList.add('hidden');
+      emptyState.classList.add('hidden');
 
-      // 顯示倉庫名稱 (取最後目錄名)
-      const folderName = currentRepo.replace(/\\/g, '/').split('/').filter(Boolean).pop() || currentRepo;
-      repoNameEl.textContent = folderName;
-      repoNameEl.title = currentRepo;
+      // 嘗試選中對應的專案
+      if (projectSelect) {
+        for (let i = 0; i < projectSelect.options.length; i++) {
+          const optVal = projectSelect.options[i].value.toLowerCase().replace(/\\/g, '/');
+          const curVal = currentRepo.toLowerCase().replace(/\\/g, '/');
+          if (optVal === curVal || curVal.startsWith(optVal)) {
+            projectSelect.selectedIndex = i;
+            break;
+          }
+        }
+      }
       branchBadgeEl.textContent = statusRes.currentBranch;
 
       // Working Tree 狀態提示
@@ -439,8 +488,10 @@
   // 事件綁定
   btnRefresh.addEventListener('click', async () => {
     btnRefresh.style.transform = 'rotate(180deg)';
-    await loadRepoMeta();
-    await loadCommits();
+    const isGit = await loadRepoMeta();
+    if (isGit) {
+      await loadCommits();
+    }
     setTimeout(() => btnRefresh.style.transform = '', 300);
   });
 
@@ -464,9 +515,22 @@
     repoSwitchBar.classList.toggle('hidden');
   });
 
-  repoInfoBtn.addEventListener('click', () => {
-    repoSwitchBar.classList.toggle('hidden');
-  });
+  if (projectSelect) {
+    projectSelect.addEventListener('change', async (e) => {
+      const val = e.target.value;
+      if (val === '__custom__') {
+        repoSwitchBar.classList.remove('hidden');
+        repoPathInput.focus();
+        return;
+      }
+      currentRepo = val;
+      localStorage.setItem('agy_git_graph_repo', currentRepo);
+      repoPathInput.value = currentRepo;
+      repoSwitchBar.classList.add('hidden');
+      await loadRepoMeta();
+      await loadCommits();
+    });
+  }
 
   btnSetRepo.addEventListener('click', async () => {
     const newPath = repoPathInput.value.trim();
@@ -484,6 +548,7 @@
         currentRepo = res.repoPath;
         localStorage.setItem('agy_git_graph_repo', currentRepo);
         repoSwitchBar.classList.add('hidden');
+        await loadProjects();
         await loadRepoMeta();
         await loadCommits();
       } else {
@@ -519,7 +584,10 @@
 
   // 初始啟動
   (async () => {
-    await loadRepoMeta();
-    await loadCommits();
+    await loadProjects();
+    const isGit = await loadRepoMeta();
+    if (isGit) {
+      await loadCommits();
+    }
   })();
 })();
