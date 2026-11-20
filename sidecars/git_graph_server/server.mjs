@@ -2,6 +2,7 @@ import http from 'node:http';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -13,7 +14,8 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 // 初始預設倉庫路徑（自動尋找當前工作區或 AGY 已註冊的 Git 專案）
 function getAgyProjects() {
   const projects = [];
-  const configProjectsDir = path.join(process.env.USERPROFILE || '', '.gemini', 'config', 'projects');
+  const homedir = os.homedir();
+  const configProjectsDir = path.join(homedir, '.gemini', 'config', 'projects');
   if (fs.existsSync(configProjectsDir)) {
     try {
       const files = fs.readdirSync(configProjectsDir);
@@ -25,8 +27,11 @@ function getAgyProjects() {
             if (data.projectResources && Array.isArray(data.projectResources.resources)) {
               for (const res of data.projectResources.resources) {
                 if (res.folderUri) {
-                  let p = res.folderUri.replace(/^file:\/\/\//, '');
+                  let p = res.folderUri.replace(/^file:\/\//, '');
                   p = decodeURIComponent(p);
+                  if (/^\/[a-zA-Z]:/.test(p)) {
+                    p = p.slice(1);
+                  }
                   if (/^[a-zA-Z]:/.test(p)) {
                     p = p.charAt(0).toUpperCase() + p.slice(1);
                   }
@@ -56,7 +61,8 @@ function resolveSessionRepo(convId) {
   const projects = getAgyProjects();
   if (projects.length === 0) return null;
 
-  const appDataDir = process.env.ANTIGRAVITY_APP_DATA_DIR || path.join(process.env.USERPROFILE || '', '.gemini', 'antigravity');
+  const homedir = os.homedir();
+  const appDataDir = process.env.ANTIGRAVITY_APP_DATA_DIR || path.join(homedir, '.gemini', 'antigravity');
   const convDbPath = path.join(appDataDir, 'conversations', `${convId}.db`);
 
   if (fs.existsSync(convDbPath)) {
@@ -118,13 +124,17 @@ async function runGit(args, cwd = currentRepoPath) {
       windowsHide: true,
       encoding: 'utf8'
     });
-    return { ok: true, stdout: stdout.trim(), stderr: stderr.trim() };
+    return {
+      ok: true,
+      stdout: stdout ? stdout.replace(/[\r\n]+$/, '') : '',
+      stderr: stderr ? stderr.replace(/[\r\n]+$/, '') : ''
+    };
   } catch (err) {
     return {
       ok: false,
       error: err.message,
-      stderr: err.stderr ? err.stderr.trim() : '',
-      stdout: err.stdout ? err.stdout.trim() : ''
+      stderr: err.stderr ? err.stderr.replace(/[\r\n]+$/, '') : '',
+      stdout: err.stdout ? err.stdout.replace(/[\r\n]+$/, '') : ''
     };
   }
 }
@@ -351,6 +361,127 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // API: 輕量檢測本地 Git 狀態變更 (Watch State)
+  if (pathname === '/api/watch-state' && req.method === 'GET') {
+    if (!queryRepo) return sendJson(res, { ok: true, stateHash: '' });
+
+    const [headRes, branchRes, statusRes] = await Promise.all([
+      runGit(['rev-parse', 'HEAD'], queryRepo),
+      runGit(['rev-parse', '--abbrev-ref', 'HEAD'], queryRepo),
+      runGit(['status', '--porcelain'], queryRepo)
+    ]);
+
+    const head = headRes.stdout || '';
+    const branch = branchRes.stdout || '';
+    const statusText = statusRes.stdout || '';
+    const statusCount = statusText ? statusText.split('\n').filter(Boolean).length : 0;
+    const stateHash = `${head}:${branch}:${statusText}`;
+
+    return sendJson(res, {
+      ok: true,
+      stateHash,
+      isClean: statusCount === 0
+    });
+  }
+
+  // API: 取得工作區未提交變更清單
+  if (pathname === '/api/working-tree' && req.method === 'GET') {
+    if (!queryRepo) return sendJson(res, { ok: false, error: 'No repo' }, 400);
+
+    const statusRes = await runGit(['-c', 'core.quotepath=false', 'status', '--porcelain', '-uall'], queryRepo);
+    if (!statusRes.ok) return sendJson(res, { ok: false, error: statusRes.error }, 500);
+
+    const lines = (statusRes.stdout || '').split('\n').filter(Boolean);
+    const files = [];
+
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, '');
+      if (!line) continue;
+
+      // 支援標準 2 字元狀態碼 (例: " M README.md", "?? new.txt", "A  file.js")
+      // 或開頭空格被 trim 掉的情況 (例: "M README.md")
+      const match = line.match(/^([ MADRCU?]{1,2})\s+(.+)$/);
+      if (!match) continue;
+
+      const code = match[1];
+      let filePath = match[2].trim();
+      if (filePath.startsWith('"') && filePath.endsWith('"')) {
+        filePath = filePath.slice(1, -1);
+      }
+
+      let status = 'M';
+      let label = '修改';
+
+      if (code.includes('?')) {
+        status = '?';
+        label = '未追蹤';
+      } else if (code.includes('A')) {
+        status = 'A';
+        label = '新增';
+      } else if (code.includes('D')) {
+        status = 'D';
+        label = '刪除';
+      } else if (code.includes('R')) {
+        status = 'R';
+        label = '重命名';
+      } else if (code.includes('M')) {
+        status = 'M';
+        label = '修改';
+      }
+
+      files.push({
+        raw: code,
+        status,
+        label,
+        path: filePath,
+        staged: code.length === 2 ? (code.charAt(0) !== ' ' && code.charAt(0) !== '?') : false
+      });
+    }
+
+    return sendJson(res, {
+      ok: true,
+      isClean: files.length === 0,
+      files
+    });
+  }
+
+  // API: 取得工作區未提交檔案的 Diff
+  if (pathname === '/api/working-diff' && req.method === 'GET') {
+    let filePath = reqUrl.searchParams.get('file');
+    if (!filePath) return sendJson(res, { ok: false, error: 'file is required' }, 400);
+    if (filePath.startsWith('"') && filePath.endsWith('"')) {
+      filePath = filePath.slice(1, -1);
+    }
+
+    // 先嘗試取得 HEAD 與當前檔案的 diff（包含 staged 與 unstaged）
+    let diffRes = await runGit(['-c', 'core.quotepath=false', 'diff', 'HEAD', '--', filePath], queryRepo);
+
+    // 若 HEAD 比對為空（可能為剛新增的未追蹤檔案或空 commit）
+    if (!diffRes.stdout) {
+      diffRes = await runGit(['-c', 'core.quotepath=false', 'diff', '--', filePath], queryRepo);
+    }
+
+    let diffText = diffRes.stdout || '';
+
+    // 如果仍無 diff，檢查是否為未追蹤新檔案 (??)，若是則生成整份新增內容 diff
+    if (!diffText) {
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(queryRepo, filePath);
+      if (fs.existsSync(fullPath)) {
+        try {
+          const content = fs.readFileSync(fullPath, 'utf8');
+          const lines = content.split('\n');
+          diffText = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n` + lines.map(l => `+${l}`).join('\n');
+        } catch {}
+      }
+    }
+
+    return sendJson(res, {
+      ok: true,
+      file: filePath,
+      diff: diffText
+    });
+  }
+
   // API: 取得分支清單
   if (pathname === '/api/branches' && req.method === 'GET') {
     const branchesRes = await runGit(['branch', '-a', '--format=%(refname:short)|%(HEAD)'], queryRepo);
@@ -506,6 +637,43 @@ const server = http.createServer(async (req, res) => {
       }
     });
     return;
+  }
+
+  // API: 在系統預設瀏覽器以獨立全螢幕視窗開啟 Diff
+  if (pathname === '/api/open-external') {
+    const hash = reqUrl.searchParams.get('hash');
+    const file = reqUrl.searchParams.get('file');
+    let targetUrl = reqUrl.searchParams.get('url');
+
+    if (hash && file) {
+      targetUrl = `http://127.0.0.1:${PORT}/diff.html?hash=${encodeURIComponent(hash)}&file=${encodeURIComponent(file)}${queryRepo ? '&repo=' + encodeURIComponent(queryRepo) : ''}`;
+    }
+
+    if (!targetUrl) {
+      return sendJson(res, { ok: false, error: 'hash & file or url is required' }, 400);
+    }
+
+    try {
+      if (process.platform === 'win32') {
+        // 使用 rundll32.exe 呼叫 ShellExecute 啟動預設瀏覽器，不經 cmd.exe，不受 & 符號干擾
+        execFile('rundll32.exe', ['url.dll,FileProtocolHandler', targetUrl], (err) => {
+          if (err) {
+            execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Start-Process '${targetUrl.replace(/'/g, "''")}'`]);
+          }
+        });
+      } else if (process.platform === 'darwin') {
+        execFile('open', [targetUrl]);
+      } else {
+        execFile('xdg-open', [targetUrl], (err) => {
+          if (err) {
+            execFile('wslview', [targetUrl], () => {});
+          }
+        });
+      }
+      return sendJson(res, { ok: true, url: targetUrl });
+    } catch (err) {
+      return sendJson(res, { ok: false, error: err.message }, 500);
+    }
   }
 
   // 靜態檔案路由

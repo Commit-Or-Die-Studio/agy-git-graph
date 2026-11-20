@@ -13,8 +13,8 @@
   ];
 
   const ROW_HEIGHT = 28;
-  const LANE_WIDTH = 16;
-  const PADDING_LEFT = 14;
+  const LANE_WIDTH = 14;
+  const PADDING_LEFT = 12;
 
   // 狀態變數
   let currentRepo = '';
@@ -28,6 +28,7 @@
   const $ = (id) => document.getElementById(id);
   const projectSelect = $('project-select');
   const branchBadgeEl = $('current-branch-badge');
+  const statusBar = $('status-bar');
   const workingTreeStatusEl = $('working-tree-status');
   const commitsCountEl = $('commits-count');
   const branchSelect = $('branch-select');
@@ -45,6 +46,8 @@
   
   // Drawer DOM
   const detailDrawer = $('detail-drawer');
+  const drawerResizer = $('drawer-resizer');
+  const btnMaximizeDrawer = $('btn-maximize-drawer');
   const detailHash = $('detail-hash');
   const detailAuthor = $('detail-author');
   const detailSubject = $('detail-subject');
@@ -57,6 +60,10 @@
   const diffFilename = $('diff-filename');
   const diffContent = $('diff-content');
   const btnCloseDiff = $('btn-close-diff');
+  const btnPopoutDiff = $('btn-popout-diff');
+  const btnMaximizeDiff = $('btn-maximize-diff');
+
+  let currentDiffFile = '';
 
   // 時間格式化 (相對時間)
   function formatRelativeTime(dateStr) {
@@ -159,15 +166,15 @@
       }
       branchBadgeEl.textContent = statusRes.currentBranch;
 
-      // Working Tree 狀態提示
+      // Working Tree 狀態提示 (支援點擊查看變更)
       if (statusRes.isClean) {
-        workingTreeStatusEl.innerHTML = '<span style="color:#a6e3a1;">● 工作區乾淨 (Clean)</span>';
+        workingTreeStatusEl.innerHTML = '<span class="working-tree-btn" style="color:#a6e3a1;" title="點擊檢視工作區狀態">● 工作區乾淨 (Clean)</span>';
       } else {
         const parts = [];
         if (statusRes.stagedCount) parts.push(`${statusRes.stagedCount} 暫存`);
         if (statusRes.unstagedCount) parts.push(`${statusRes.unstagedCount} 修改`);
         if (statusRes.untrackedCount) parts.push(`${statusRes.untrackedCount} 未追蹤`);
-        workingTreeStatusEl.innerHTML = `<span style="color:#f9e2af;">● ${parts.join(', ')}</span>`;
+        workingTreeStatusEl.innerHTML = `<span class="working-tree-btn" style="color:#f9e2af;" title="點擊檢視未提交的變更清單與 Diff">● ${parts.join(', ')} (點擊查看)</span>`;
       }
 
       // 渲染分支下拉選單
@@ -307,6 +314,30 @@
 
     graphSvg.innerHTML = pathsHtml + circlesHtml;
 
+    // 預先計算每一列實際佔用的最大軌道 (動態緊湊 Spacer，消除無用空白)
+    const rowMaxLanes = new Array(visibleCommits.length).fill(0);
+    visibleCommits.forEach((c, idx) => {
+      rowMaxLanes[idx] = Math.max(rowMaxLanes[idx], c.x);
+    });
+
+    for (const link of allLinks) {
+      const commit = allCommits[link.fromY];
+      const parent = allCommits[link.toY];
+      if (!commit || !parent) continue;
+
+      const fromRow = rowMap.get(commit.hash);
+      const toRow = rowMap.get(parent.hash);
+      if (fromRow === undefined || toRow === undefined) continue;
+
+      const minRow = Math.min(fromRow, toRow);
+      const maxRow = Math.max(fromRow, toRow);
+      const maxLinkX = Math.max(link.fromX, link.toX);
+
+      for (let r = minRow; r <= maxRow; r++) {
+        rowMaxLanes[r] = Math.max(rowMaxLanes[r], maxLinkX);
+      }
+    }
+
     // 3. 渲染 Commit 列表 (文字與裝飾 Badge)
     commitList.innerHTML = '';
     const fragment = document.createDocumentFragment();
@@ -317,23 +348,41 @@
       row.dataset.hash = commit.hash;
       if (commit.hash === selectedCommitHash) row.classList.add('selected');
 
-      // 左側預留圖形寬度 Spacer
+      // 左側預留圖形寬度 Spacer (依當前行實際軌道動態計算，緊湊消除空白)
+      const maxLaneInRow = rowMaxLanes[rowIdx] !== undefined ? rowMaxLanes[rowIdx] : commit.x;
+      const rowSpacerWidth = PADDING_LEFT + maxLaneInRow * LANE_WIDTH + 10;
+
       const spacer = document.createElement('div');
       spacer.className = 'commit-graph-spacer';
-      spacer.style.width = `${svgWidth}px`;
+      spacer.style.width = `${rowSpacerWidth}px`;
       row.appendChild(spacer);
 
       // 右側內容
       const content = document.createElement('div');
       content.className = 'commit-content';
 
-      // 裝飾標籤 (Badges: HEAD, branch, tag)
+      // 裝飾標籤 (Badges: HEAD, branch, tag, remote)
       if (commit.refs && commit.refs.length > 0) {
         commit.refs.forEach(ref => {
           const badge = document.createElement('span');
           badge.className = `commit-badge badge-${ref.type}`;
-          const icon = ref.type === 'tag' ? '🏷️ ' : (ref.type === 'head' ? '★ ' : '🌿 ');
-          badge.textContent = `${icon}${ref.name}`;
+          
+          let icon = '⎇ ';
+          let displayName = ref.name;
+          if (ref.type === 'tag') {
+            icon = '🏷️ ';
+          } else if (ref.type === 'head') {
+            icon = '★ ';
+          } else if (ref.type === 'remote') {
+            icon = '☁ ';
+            // 若為 origin/xxx，精簡顯示以釋放空間，hover 顯示完整名稱
+            if (displayName.startsWith('origin/')) {
+              displayName = displayName.substring('origin/'.length);
+            }
+          }
+
+          badge.textContent = `${icon}${displayName}`;
+          badge.title = `${ref.type === 'remote' ? '遠端分支: ' : (ref.type === 'tag' ? '標籤: ' : '分支: ')}${ref.name}`;
           content.appendChild(badge);
         });
       }
@@ -391,6 +440,8 @@
   // 開啟 Commit 詳情 Drawer
   async function openCommitDetail(hash) {
     selectedCommitHash = hash;
+    statusBar.classList.remove('selected');
+    detailHash.classList.remove('badge-working');
     document.querySelectorAll('.commit-row').forEach(r => {
       r.classList.toggle('selected', r.dataset.hash === hash);
     });
@@ -438,6 +489,20 @@
           li.appendChild(statusBadge);
           li.appendChild(pathSpan);
 
+          // 檔案快捷操作 (在主畫面獨立開啟 Diff)
+          const actionsDiv = document.createElement('div');
+          actionsDiv.className = 'file-actions';
+          const quickPopBtn = document.createElement('button');
+          quickPopBtn.className = 'file-quick-btn';
+          quickPopBtn.textContent = '↗';
+          quickPopBtn.title = '在主畫面新視窗查看 Diff';
+          quickPopBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openPopoutDiff(hash, file.path);
+          });
+          actionsDiv.appendChild(quickPopBtn);
+          li.appendChild(actionsDiv);
+
           // 點擊檔案檢視 Diff
           li.addEventListener('click', () => {
             loadFileDiff(hash, file.path);
@@ -454,8 +519,46 @@
     }
   }
 
+  // 顯示輕量通知 Toast
+  function showToast(msg) {
+    let toast = $('app-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'app-toast';
+      toast.className = 'app-toast';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => toast.classList.remove('show'), 2500);
+  }
+
+  // 開啟獨立大視窗查看 Diff
+  async function openPopoutDiff(hash, filePath) {
+    showToast('正在開啟外部瀏覽器...');
+
+    // 透過後端構建本機 HTTP 網址並呼叫系統預設瀏覽器（突破 Webview 協定限制）
+    try {
+      const res = await fetch(apiUrl('/api/open-external', { hash, file: filePath })).then(r => r.json());
+      if (res.ok) {
+        showToast('已在系統瀏覽器開啟獨立 Diff！');
+        if (res.url && navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(res.url);
+          } catch {}
+        }
+      } else {
+        showToast(`開啟失敗: ${res.error || '無法開啟'}`);
+      }
+    } catch (err) {
+      showToast(`開啟失敗: ${err.message}`);
+    }
+  }
+
   // 載入並渲染單一檔案的 Diff
   async function loadFileDiff(hash, filePath) {
+    currentDiffFile = filePath;
     diffSection.classList.remove('hidden');
     diffFilename.textContent = filePath;
     diffContent.textContent = '載入 Diff 中...';
@@ -466,6 +569,118 @@
 
       const lines = (res.diff || '').split('\n');
       diffContent.innerHTML = '';
+
+      lines.forEach(line => {
+        const div = document.createElement('div');
+        div.textContent = line;
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          div.className = 'diff-line-add';
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          div.className = 'diff-line-del';
+        } else if (line.startsWith('@@')) {
+          div.className = 'diff-line-hunk';
+        }
+        diffContent.appendChild(div);
+      });
+      diffContent.scrollTop = 0;
+    } catch (err) {
+      diffContent.textContent = `無法載入 Diff: ${err.message}`;
+    }
+  }
+
+  // 開啟工作區未提交變更詳情
+  async function openWorkingTreeDetail() {
+    selectedCommitHash = 'WORKING';
+    if (statusBar) statusBar.classList.add('selected');
+    detailHash.classList.add('badge-working');
+    document.querySelectorAll('.commit-row.selected').forEach(r => r.classList.remove('selected'));
+
+    detailDrawer.classList.remove('hidden');
+    diffSection.classList.add('hidden');
+    detailHash.textContent = 'WORKING';
+    detailAuthor.textContent = '本機工作區 (Uncommitted)';
+    detailSubject.textContent = '載入工作區檔案變更...';
+    detailDate.textContent = '即時狀態';
+    detailBodyText.classList.add('hidden');
+    fileList.innerHTML = '<li style="padding:6px; color:#9399b2;">載入工作區檔案中...</li>';
+
+    try {
+      const res = await fetch(apiUrl('/api/working-tree')).then(r => r.json());
+      if (!res.ok) throw new Error(res.error || 'Failed to load working tree');
+
+      detailHash.textContent = 'WORKING';
+      detailAuthor.textContent = '未提交的工作區變更 (Working Tree)';
+      detailSubject.textContent = res.isClean ? '工作區乾淨，沒有未提交的變更' : `共 ${res.files.length} 個檔案已變更`;
+      detailDate.textContent = new Date().toLocaleTimeString('zh-TW');
+
+      detailFilesCount.textContent = res.files ? res.files.length : 0;
+      fileList.innerHTML = '';
+
+      if (res.files && res.files.length > 0) {
+        res.files.forEach(file => {
+          const li = document.createElement('li');
+          li.className = 'file-item';
+
+          const statusBadge = document.createElement('span');
+          statusBadge.className = `file-status status-${file.status}`;
+          statusBadge.textContent = file.status;
+          statusBadge.title = file.label;
+
+          const pathSpan = document.createElement('span');
+          pathSpan.className = 'file-path';
+          pathSpan.textContent = file.path;
+          pathSpan.title = `${file.path} (${file.label})`;
+
+          li.appendChild(statusBadge);
+          li.appendChild(pathSpan);
+
+          // 檔案快捷操作 (在主畫面獨立開啟 Diff)
+          const actionsDiv = document.createElement('div');
+          actionsDiv.className = 'file-actions';
+          const quickPopBtn = document.createElement('button');
+          quickPopBtn.className = 'file-quick-btn';
+          quickPopBtn.textContent = '↗';
+          quickPopBtn.title = '在主畫面新視窗查看 Diff';
+          quickPopBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openPopoutDiff('WORKING', file.path);
+          });
+          actionsDiv.appendChild(quickPopBtn);
+          li.appendChild(actionsDiv);
+
+          // 點擊檔案檢視 Diff
+          li.addEventListener('click', () => {
+            loadWorkingDiff(file.path);
+          });
+
+          fileList.appendChild(li);
+        });
+      } else {
+        fileList.innerHTML = '<li style="padding:8px; color:#a6e3a1;">工作區完全乾淨 (Working tree clean)</li>';
+      }
+    } catch (err) {
+      console.error('Failed to load working tree details:', err);
+      detailSubject.textContent = `載入失敗: ${err.message}`;
+    }
+  }
+
+  // 載入工作區特定檔案的 Diff
+  async function loadWorkingDiff(filePath) {
+    currentDiffFile = filePath;
+    diffSection.classList.remove('hidden');
+    diffFilename.textContent = `[WORKING] ${filePath}`;
+    diffContent.textContent = '載入 Diff 中...';
+
+    try {
+      const res = await fetch(apiUrl('/api/working-diff', { file: filePath })).then(r => r.json());
+      if (!res.ok) throw new Error(res.error || 'Failed to load working diff');
+
+      const lines = (res.diff || '').split('\n');
+      diffContent.innerHTML = '';
+      if (!res.diff || !res.diff.trim()) {
+        diffContent.innerHTML = '<div style="padding:10px;color:#9399b2;">無差異 (可能檔案內容無變動或僅權限變更)</div>';
+        return;
+      }
 
       lines.forEach(line => {
         const div = document.createElement('div');
@@ -524,6 +739,7 @@
         return;
       }
       currentRepo = val;
+      lastStateHash = null;
       localStorage.setItem('agy_git_graph_repo', currentRepo);
       repoPathInput.value = currentRepo;
       repoSwitchBar.classList.add('hidden');
@@ -546,6 +762,7 @@
 
       if (res.ok) {
         currentRepo = res.repoPath;
+        lastStateHash = null;
         localStorage.setItem('agy_git_graph_repo', currentRepo);
         repoSwitchBar.classList.add('hidden');
         await loadProjects();
@@ -564,12 +781,113 @@
   btnCloseDrawer.addEventListener('click', () => {
     detailDrawer.classList.add('hidden');
     selectedCommitHash = null;
+    if (statusBar) statusBar.classList.remove('selected');
+    detailHash.classList.remove('badge-working');
     document.querySelectorAll('.commit-row.selected').forEach(r => r.classList.remove('selected'));
   });
 
+  // 點擊狀態列檢視未提交的工作區變更 (Working Tree)
+  if (statusBar) {
+    statusBar.addEventListener('click', () => {
+      openWorkingTreeDetail();
+    });
+  }
+
   btnCloseDiff.addEventListener('click', () => {
     diffSection.classList.add('hidden');
+    if (diffSection.classList.contains('diff-fullscreen')) {
+      diffSection.classList.remove('diff-fullscreen');
+      btnMaximizeDiff.textContent = '⛶';
+      const drawerBody = document.querySelector('.drawer-body');
+      if (drawerBody && diffSection.parentElement !== drawerBody) {
+        drawerBody.appendChild(diffSection);
+      }
+    }
   });
+
+  // 在獨立大視窗中開啟 Diff
+  btnPopoutDiff.addEventListener('click', () => {
+    if (selectedCommitHash && currentDiffFile) {
+      openPopoutDiff(selectedCommitHash, currentDiffFile);
+    }
+  });
+
+  // 在側邊欄內全螢幕展開 Diff
+  btnMaximizeDiff.addEventListener('click', () => {
+    const isFull = diffSection.classList.toggle('diff-fullscreen');
+    btnMaximizeDiff.textContent = isFull ? '🗗' : '⛶';
+    btnMaximizeDiff.title = isFull ? '還原視窗' : '在側邊欄內全螢幕展開';
+    if (isFull) {
+      document.body.appendChild(diffSection);
+    } else {
+      const drawerBody = document.querySelector('.drawer-body');
+      if (drawerBody && diffSection.parentElement !== drawerBody) {
+        drawerBody.appendChild(diffSection);
+      }
+    }
+  });
+
+  // 抽屜可拖曳拉桿 (Draggable Resizer)
+  let isResizing = false;
+  let isDrawerMaximized = false;
+  let savedDrawerHeight = parseFloat(localStorage.getItem('agy_git_graph_drawer_h'));
+  if (!savedDrawerHeight || savedDrawerHeight === 50) {
+    savedDrawerHeight = 62;
+    localStorage.setItem('agy_git_graph_drawer_h', 62);
+  }
+
+  detailDrawer.style.height = `${savedDrawerHeight}%`;
+
+  drawerResizer.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    drawerResizer.classList.add('resizing');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const container = document.querySelector('.app-container');
+    const containerHeight = container.clientHeight;
+    const mouseY = e.clientY;
+    const fromBottom = containerHeight - mouseY;
+    let percent = (fromBottom / containerHeight) * 100;
+    percent = Math.max(18, Math.min(92, percent)); // 限制在 18% ~ 92%
+    detailDrawer.style.height = `${percent}%`;
+    savedDrawerHeight = percent;
+    localStorage.setItem('agy_git_graph_drawer_h', percent);
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      drawerResizer.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  });
+
+  // 雙擊手把快速切換半屏 (50%) 與大視窗 (88%)
+  drawerResizer.addEventListener('dblclick', () => {
+    toggleMaximizeDrawer();
+  });
+
+  btnMaximizeDrawer.addEventListener('click', () => {
+    toggleMaximizeDrawer();
+  });
+
+  function toggleMaximizeDrawer() {
+    isDrawerMaximized = !isDrawerMaximized;
+    if (isDrawerMaximized) {
+      detailDrawer.style.height = '88%';
+      btnMaximizeDrawer.textContent = '🗗';
+      btnMaximizeDrawer.title = '還原面板高度';
+    } else {
+      detailDrawer.style.height = `${savedDrawerHeight || 50}%`;
+      btnMaximizeDrawer.textContent = '⛶';
+      btnMaximizeDrawer.title = '最大化面板';
+    }
+  }
 
   // 鍵盤快捷鍵：Escape 關閉 drawer 或 diff
   window.addEventListener('keydown', (e) => {
@@ -605,6 +923,7 @@
         const normalizedCurrent = currentRepo ? currentRepo.toLowerCase().replace(/\\/g, '/') : '';
         if (normalizedTarget !== normalizedCurrent) {
           currentRepo = res.repoPath;
+          lastStateHash = null;
           localStorage.setItem('agy_git_graph_repo', currentRepo);
           await loadProjects();
           const isGit = await loadRepoMeta();
@@ -618,8 +937,39 @@
     }
   }
 
-  // 定時輪詢檢查當前對話切換 (每 1.2 秒)
+  // 自動偵測本地 Git 狀態變更 (Watch State)
+  let lastStateHash = null;
+  let isCheckingState = false;
+
+  async function checkGitStateChange() {
+    if (!currentRepo || isCheckingState) return;
+    isCheckingState = true;
+    try {
+      const res = await fetch(apiUrl('/api/watch-state')).then(r => r.json());
+      if (res.ok && typeof res.stateHash === 'string') {
+        if (lastStateHash === null) {
+          lastStateHash = res.stateHash;
+        } else if (res.stateHash !== lastStateHash) {
+          lastStateHash = res.stateHash;
+          const isGit = await loadRepoMeta();
+          if (isGit) {
+            await loadCommits();
+            if (selectedCommitHash === 'WORKING') {
+              await openWorkingTreeDetail();
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // 靜默處理
+    } finally {
+      isCheckingState = false;
+    }
+  }
+
+  // 每 1.2 秒輪詢檢查對話切換，每 1.5 秒輪詢檢查本地 Git state (耗能極低，僅 rev-parse HEAD 與 status --porcelain)
   setInterval(syncActiveSessionRepo, 1200);
+  setInterval(checkGitStateChange, 1500);
 
   // 初始啟動
   (async () => {

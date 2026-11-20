@@ -75,12 +75,18 @@
 
     <!-- 下方/側邊 Commit 詳情面板 (Drawer) -->
     <aside id="detail-drawer" class="detail-drawer hidden">
+      <!-- 上下拖曳高度拉桿 (Resizable Splitter) -->
+      <div class="drawer-resizer" id="drawer-resizer" title="按住拖曳調整上下高度 / 雙擊切換最大化"></div>
+
       <div class="drawer-header">
         <div class="drawer-title-group">
           <span class="commit-hash-pill" id="detail-hash">-------</span>
           <span class="drawer-author" id="detail-author">Author</span>
         </div>
-        <button id="btn-close-drawer" class="icon-btn" title="關閉">&times;</button>
+        <div class="drawer-header-actions">
+          <button id="btn-maximize-drawer" class="icon-btn" title="最大化 / 還原面板">⛶</button>
+          <button id="btn-close-drawer" class="icon-btn" title="關閉">&times;</button>
+        </div>
       </div>
 
       <div class="drawer-body">
@@ -103,7 +109,11 @@
         <div class="diff-section hidden" id="diff-section">
           <div class="diff-header">
             <span class="diff-filename" id="diff-filename">filename</span>
-            <button id="btn-close-diff" class="icon-btn" title="收合 Diff">&times;</button>
+            <div class="diff-header-actions">
+              <button id="btn-popout-diff" class="icon-btn" title="在獨立全螢幕主畫面查看 Diff">↗</button>
+              <button id="btn-maximize-diff" class="icon-btn" title="在側邊欄內全螢幕展開">⛶</button>
+              <button id="btn-close-diff" class="icon-btn" title="收合 Diff">&times;</button>
+            </div>
           </div>
           <div class="diff-content" id="diff-content"></div>
         </div>

@@ -6,7 +6,7 @@
   "main": "sidecars/git_graph_server/server.mjs",
   "scripts": {
     "start": "node sidecars/git_graph_server/server.mjs",
-    "deploy": "scripts\\deploy-global.bat"
+    "package": "node scripts/package.mjs"
   },
   "repository": {
     "type": "git",
