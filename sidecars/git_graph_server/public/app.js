@@ -1051,12 +1051,20 @@
 
   // 事件綁定
   btnRefresh.addEventListener('click', async () => {
-    btnRefresh.style.transform = 'rotate(180deg)';
+    btnRefresh.style.transition = 'transform 0.6s ease';
+    btnRefresh.style.transform = 'rotate(360deg)';
+    try {
+      // 嘗試拉取遠端最新變更 (非同步 quiet fetch)
+      fetch(apiUrl('/api/fetch'), { method: 'POST' }).catch(() => {});
+    } catch {}
     const isGit = await loadRepoMeta();
     if (isGit) {
       await loadCommits();
     }
-    setTimeout(() => btnRefresh.style.transform = '', 300);
+    setTimeout(() => {
+      btnRefresh.style.transition = '';
+      btnRefresh.style.transform = '';
+    }, 600);
   });
 
   branchSelect.addEventListener('change', () => {

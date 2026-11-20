@@ -633,7 +633,7 @@ const server = http.createServer(async (req, res) => {
     const [branchRes, topLevelRes, statusRes, remoteRes] = await Promise.all([
       runGit(['rev-parse', '--abbrev-ref', 'HEAD'], queryRepo),
       runGit(['rev-parse', '--show-toplevel'], queryRepo),
-      runGit(['status', '--porcelain'], queryRepo),
+      runGit(['status', '--porcelain', '--ignore-submodules=dirty'], queryRepo),
       runGit(['config', '--get', 'remote.origin.url'], queryRepo)
     ]);
 
@@ -659,21 +659,23 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // API: 輕量檢測本地 Git 狀態變更 (Watch State)
+  // API: 輕量檢測本地 Git 狀態變更 (Watch State，含遠端分支指標與子模組快速過濾)
   if (pathname === '/api/watch-state' && req.method === 'GET') {
     if (!queryRepo) return sendJson(res, { ok: true, stateHash: '' });
 
-    const [headRes, branchRes, statusRes] = await Promise.all([
+    const [headRes, branchRes, remotesRes, statusRes] = await Promise.all([
       runGit(['rev-parse', 'HEAD'], queryRepo),
       runGit(['rev-parse', '--abbrev-ref', 'HEAD'], queryRepo),
-      runGit(['status', '--porcelain'], queryRepo)
+      runGit(['for-each-ref', '--format=%(refname):%(objectname)', 'refs/remotes/'], queryRepo),
+      runGit(['status', '--porcelain', '--ignore-submodules=dirty'], queryRepo)
     ]);
 
     const head = headRes.stdout || '';
     const branch = branchRes.stdout || '';
+    const remotes = remotesRes.stdout || '';
     const statusText = statusRes.stdout || '';
     const statusCount = statusText ? statusText.split('\n').filter(Boolean).length : 0;
-    const stateHash = `${head}:${branch}:${statusText}`;
+    const stateHash = `${head}:${branch}:${remotes}:${statusText}`;
 
     return sendJson(res, {
       ok: true,
@@ -935,6 +937,13 @@ const server = http.createServer(async (req, res) => {
       }
     });
     return;
+  }
+
+  // API: 手動拉取遠端最新分支與 Commit (Git Fetch)
+  if (pathname === '/api/fetch' && req.method === 'POST') {
+    if (!queryRepo) return sendJson(res, { ok: false, error: 'No repo' }, 400);
+    const fetchRes = await runGit(['fetch', '--prune', '--quiet'], queryRepo);
+    return sendJson(res, { ok: fetchRes.ok, error: fetchRes.error });
   }
 
   // API: 在系統預設瀏覽器以獨立全螢幕視窗開啟 Diff
