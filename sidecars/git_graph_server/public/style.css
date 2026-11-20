@@ -428,7 +428,8 @@ body, html {
 
 /* 分支圖滾動容器 */
 .graph-scroll-container {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   position: relative;
   overflow: auto;
   background-color: var(--bg-color);
@@ -564,22 +565,24 @@ body, html {
   border-radius: 3px;
 }
 
-/* 詳情 Drawer */
+/* 詳情 Drawer (參與 Flex 佈局，精確分配空間與滾動條) */
 .detail-drawer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 62%;
-  min-height: 18%;
-  max-height: 94%;
+  position: relative;
+  width: 100%;
+  height: 50%;
+  min-height: 120px;
+  max-height: 85%;
+  flex-shrink: 0;
   background-color: var(--surface-color);
   border-top: 1px solid var(--border-color);
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
   z-index: 20;
-  animation: slideUp 0.2s ease-out;
+}
+
+.detail-drawer.hidden {
+  display: none !important;
 }
 
 /* 抽屜可拖曳調整手把 (Draggable Splitter Handle) */
