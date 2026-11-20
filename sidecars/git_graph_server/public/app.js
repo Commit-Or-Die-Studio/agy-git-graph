@@ -228,6 +228,94 @@
       };
     }
 
+    // 輔助函式：將平面 submodules 轉為多層樹狀結構並渲染
+    function renderSubmoduleTree(container, submodules, level = 0) {
+      const root = { isDir: true, children: new Map(), items: [] };
+      for (const sub of submodules) {
+        const parts = (sub.relPath || sub.name).replace(/\\/g, '/').split('/').filter(Boolean);
+        let cur = root;
+        for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          if (!cur.children.has(part)) {
+            cur.children.set(part, { name: part, isDir: true, children: new Map(), items: [] });
+          }
+          cur = cur.children.get(part);
+        }
+        const leafName = parts[parts.length - 1] || sub.name;
+        cur.items.push({ ...sub, leafName });
+      }
+
+      function containsCurrentRepo(node) {
+        if (node.items.some(it => isSamePath(currentRepo, it.path))) return true;
+        for (const child of node.children.values()) {
+          if (containsCurrentRepo(child)) return true;
+        }
+        return false;
+      }
+
+      function countSubmodules(node) {
+        let count = node.items.length;
+        for (const child of node.children.values()) {
+          count += countSubmodules(child);
+        }
+        return count;
+      }
+
+      function renderNode(targetEl, node, currentLevel) {
+        const indent = 12 + currentLevel * 14;
+
+        // 渲染目錄節點 (Folders)
+        for (const [folderName, childNode] of node.children.entries()) {
+          const totalCount = countSubmodules(childNode);
+          const hasSelected = containsCurrentRepo(childNode);
+
+          const folderEl = document.createElement('div');
+          folderEl.className = 'tree-folder-header';
+          folderEl.style.paddingLeft = `${indent}px`;
+          folderEl.innerHTML = `
+            <span class="tree-arrow ${hasSelected ? 'open' : ''}">▶</span>
+            <span>📁</span>
+            <span style="font-weight:600;">${escapeHtml(folderName)}</span>
+            <span class="tree-badge">(${totalCount})</span>
+          `;
+
+          const childrenEl = document.createElement('div');
+          childrenEl.className = `tree-folder-children ${hasSelected ? 'open' : ''}`;
+
+          folderEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = childrenEl.classList.toggle('open');
+            folderEl.querySelector('.tree-arrow').classList.toggle('open', isOpen);
+          });
+
+          targetEl.appendChild(folderEl);
+          targetEl.appendChild(childrenEl);
+
+          renderNode(childrenEl, childNode, currentLevel + 1);
+        }
+
+        // 渲染葉子項目 (Submodule Repos)
+        for (const sub of node.items) {
+          const subItem = document.createElement('div');
+          subItem.className = `menu-item ${isSamePath(currentRepo, sub.path) ? 'selected' : ''}`;
+          subItem.style.paddingLeft = `${indent}px`;
+          subItem.innerHTML = `
+            <span class="menu-item-text">
+              <span>📦</span>
+              <span>${escapeHtml(sub.leafName)}${sub.isGit ? '' : ' <span style="color:#fab387;font-size:10px;">(未初始化)</span>'}</span>
+            </span>
+          `;
+          subItem.addEventListener('click', (e) => {
+            e.stopPropagation();
+            switchRepo(sub.path);
+          });
+          targetEl.appendChild(subItem);
+        }
+      }
+
+      renderNode(container, root, level);
+    }
+
     // 1. 第一分組：當前工作區 (本資料夾 Repo + Submodules)
     if (currentProj) {
       const header = document.createElement('div');
@@ -245,18 +333,36 @@
       });
       projectMenuPopup.appendChild(mainItem);
 
-      // Submodules
+      // Submodules (向右展開之二級樹狀選單，收納整齊不洗版)
       if (Array.isArray(currentProj.submodules) && currentProj.submodules.length > 0) {
-        currentProj.submodules.forEach(sub => {
-          const subItem = document.createElement('div');
-          subItem.className = `menu-item menu-item-sub ${isSamePath(currentRepo, sub.path) ? 'selected' : ''}`;
-          subItem.innerHTML = `<span class="menu-item-text"><span>📦</span><span>${escapeHtml(sub.name)}${sub.isGit ? '' : ' (未初始化)'}</span></span>`;
-          subItem.addEventListener('click', (e) => {
-            e.stopPropagation();
-            switchRepo(sub.path);
-          });
-          projectMenuPopup.appendChild(subItem);
+        const subParent = document.createElement('div');
+        subParent.className = 'menu-item menu-parent';
+        subParent.innerHTML = `
+          <span class="menu-item-text"><span>📦</span><span>子模組 (${currentProj.submodules.length})</span></span>
+          <span class="menu-arrow">▶</span>
+        `;
+
+        const subSubmenu = document.createElement('div');
+        subSubmenu.className = 'submenu-popup';
+
+        // 以階層樹狀結構渲染子模組
+        renderSubmoduleTree(subSubmenu, currentProj.submodules, 0);
+
+        subParent.addEventListener('mouseenter', () => {
+          const rect = subParent.getBoundingClientRect();
+          if (rect.right + 260 <= window.innerWidth) {
+            subSubmenu.style.left = '100%';
+            subSubmenu.style.right = 'auto';
+            subSubmenu.style.top = '-4px';
+          } else {
+            subSubmenu.style.left = 'auto';
+            subSubmenu.style.right = '0';
+            subSubmenu.style.top = '100%';
+          }
         });
+
+        subParent.appendChild(subSubmenu);
+        projectMenuPopup.appendChild(subParent);
       }
     }
 
@@ -288,16 +394,7 @@
         submenu.appendChild(pItem);
 
         if (Array.isArray(p.submodules) && p.submodules.length > 0) {
-          p.submodules.forEach(sub => {
-            const subItem = document.createElement('div');
-            subItem.className = `menu-item menu-item-sub ${isSamePath(currentRepo, sub.path) ? 'selected' : ''}`;
-            subItem.innerHTML = `<span class="menu-item-text"><span>📦</span><span>${escapeHtml(sub.name)}${sub.isGit ? '' : ' (未初始化)'}</span></span>`;
-            subItem.addEventListener('click', (e) => {
-              e.stopPropagation();
-              switchRepo(sub.path);
-            });
-            submenu.appendChild(subItem);
-          });
+          renderSubmoduleTree(submenu, p.submodules, 1);
         }
       });
     } else {
