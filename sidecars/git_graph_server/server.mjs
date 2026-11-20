@@ -220,8 +220,18 @@ function getSubmodules(repoPath, depth = 0) {
   return submodules;
 }
 
+// 記憶體快取：避免切換 Session 時每次都深度掃描專案目錄與數十個子模組
+let cachedProjects = null;
+let lastProjectsFetchTime = 0;
+const sessionConvCache = new Map();
+
 // 初始預設倉庫路徑（自動尋找當前工作區或 AGY 已註冊的 Git 專案，支援本機與 SSH 遠端）
-function getAgyProjects() {
+function getAgyProjects(force = false) {
+  const now = Date.now();
+  if (!force && cachedProjects && (now - lastProjectsFetchTime < 30000)) {
+    return cachedProjects;
+  }
+
   const projects = [];
   const homedir = os.homedir();
   const candidateDirs = [
@@ -264,12 +274,17 @@ function getAgyProjects() {
     } catch {}
   }
 
+  cachedProjects = projects;
+  lastProjectsFetchTime = Date.now();
   return projects;
 }
 
-// 依據 AGY 對話 (Session) ID 解析對應的 Git 專案路徑
+// 依據 AGY 對話 (Session) ID 解析對應的 Git 專案路徑 (含記憶體快取)
 function resolveSessionRepo(convId) {
   if (!convId || !/^[0-9a-f-]{8,}$/i.test(convId)) return null;
+  if (sessionConvCache.has(convId)) {
+    return sessionConvCache.get(convId);
+  }
 
   const projects = getAgyProjects();
   if (projects.length === 0) return null;
@@ -289,6 +304,7 @@ function resolveSessionRepo(convId) {
         const exactHit = projects.find(p => p.id === candidateId);
         if (exactHit) {
           fs.closeSync(fd);
+          sessionConvCache.set(convId, exactHit);
           return exactHit;
         }
       }
@@ -300,6 +316,7 @@ function resolveSessionRepo(convId) {
       const scanStr = scanBuf.toString('latin1', 0, scanBytes);
       for (const p of projects) {
         if (p.id && scanStr.includes(p.id)) {
+          sessionConvCache.set(convId, p);
           return p;
         }
       }
@@ -363,9 +380,9 @@ function parseRefs(refStr) {
 
   for (const part of parts) {
     if (part.startsWith('HEAD -> ')) {
-      badges.push({ type: 'head', name: part.replace('HEAD -> ', '').trim() });
+      badges.push({ type: 'head', name: `HEAD -> ${part.replace('HEAD -> ', '').trim()}`, isHead: true });
     } else if (part === 'HEAD') {
-      badges.push({ type: 'head', name: 'HEAD' });
+      badges.push({ type: 'head', name: 'HEAD', isHead: true });
     } else if (part.startsWith('tag: ')) {
       badges.push({ type: 'tag', name: part.replace('tag: ', '').trim() });
     } else if (part.startsWith('refs/tags/')) {

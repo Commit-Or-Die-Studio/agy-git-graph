@@ -504,7 +504,8 @@
         updateProjectButtonText();
         renderProjectMenu();
       }
-      branchBadgeEl.textContent = statusRes.currentBranch;
+      branchBadgeEl.textContent = `⎇ ${statusRes.currentBranch || 'HEAD'}`;
+      branchBadgeEl.title = `目前檢出分支 (HEAD): ${statusRes.currentBranch || 'HEAD'}`;
 
       // Working Tree 狀態提示 (支援點擊查看變更)
       if (statusRes.isClean) {
@@ -639,8 +640,15 @@
       const cy = rowIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
       const color = BRANCH_COLORS[c.x % BRANCH_COLORS.length];
       const isMerge = c.parents && c.parents.length > 1;
+      const isHeadCommit = c.refs && c.refs.some(r => r.type === 'head' || r.isHead);
 
-      if (isMerge) {
+      if (isHeadCommit) {
+        // 當前 Checkout 節點 (高亮 Bullseye 同心圓，一眼看出當前位置)
+        circlesHtml += `
+          <circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="#cba6f7" stroke-width="2.2"/>
+          <circle cx="${cx}" cy="${cy}" r="3.5" fill="#cba6f7" stroke="#181825" stroke-width="1"/>
+        `;
+      } else if (isMerge) {
         // Merge 節點使用外圈加粗樣式
         circlesHtml += `
           <circle cx="${cx}" cy="${cy}" r="5.5" fill="${color}" stroke="#181825" stroke-width="1.5"/>
@@ -683,8 +691,9 @@
     const fragment = document.createDocumentFragment();
 
     visibleCommits.forEach((commit, rowIdx) => {
+      const isHeadCommit = commit.refs && commit.refs.some(r => r.type === 'head' || r.isHead);
       const row = document.createElement('div');
-      row.className = 'commit-row';
+      row.className = `commit-row ${isHeadCommit ? 'is-head-commit' : ''}`;
       row.dataset.hash = commit.hash;
       if (commit.hash === selectedCommitHash) row.classList.add('selected');
 
@@ -712,7 +721,7 @@
           if (ref.type === 'tag') {
             icon = '🏷️ ';
           } else if (ref.type === 'head') {
-            icon = '★ ';
+            icon = '⌖ ';
           } else if (ref.type === 'remote') {
             icon = '☁ ';
             // 若為 origin/xxx，精簡顯示以釋放空間，hover 顯示完整名稱
@@ -722,7 +731,7 @@
           }
 
           badge.textContent = `${icon}${displayName}`;
-          badge.title = `${ref.type === 'remote' ? '遠端分支: ' : (ref.type === 'tag' ? '標籤: ' : '分支: ')}${ref.name}`;
+          badge.title = `${ref.type === 'head' ? '目前檢出 (HEAD): ' : (ref.type === 'remote' ? '遠端分支: ' : (ref.type === 'tag' ? '標籤: ' : '分支: '))}${ref.name}`;
           content.appendChild(badge);
         });
       }
