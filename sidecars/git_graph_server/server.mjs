@@ -49,6 +49,46 @@ function getAgyProjects() {
   return projects;
 }
 
+// 依據 AGY 對話 (Session) ID 解析對應的 Git 專案路徑
+function resolveSessionRepo(convId) {
+  if (!convId || !/^[0-9a-f-]{8,}$/i.test(convId)) return null;
+
+  const projects = getAgyProjects();
+  if (projects.length === 0) return null;
+
+  const appDataDir = process.env.ANTIGRAVITY_APP_DATA_DIR || path.join(process.env.USERPROFILE || '', '.gemini', 'antigravity');
+  const convDbPath = path.join(appDataDir, 'conversations', `${convId}.db`);
+
+  if (fs.existsSync(convDbPath)) {
+    try {
+      // 優先讀取 offset 327644（AGY 內部儲存所屬 Project ID 的固定標頭位置）
+      const fd = fs.openSync(convDbPath, 'r');
+      const headerBuf = Buffer.alloc(36);
+      const readBytes = fs.readSync(fd, headerBuf, 0, 36, 327644);
+      if (readBytes === 36) {
+        const candidateId = headerBuf.toString('latin1');
+        const exactHit = projects.find(p => p.id === candidateId);
+        if (exactHit) {
+          fs.closeSync(fd);
+          return exactHit;
+        }
+      }
+
+      // 次選方案：掃描前 512KB 比對已知 Project ID
+      const scanBuf = Buffer.alloc(512 * 1024);
+      const scanBytes = fs.readSync(fd, scanBuf, 0, scanBuf.length, 0);
+      fs.closeSync(fd);
+      const scanStr = scanBuf.toString('latin1', 0, scanBytes);
+      for (const p of projects) {
+        if (p.id && scanStr.includes(p.id)) {
+          return p;
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+
 function resolveInitialRepo() {
   if (process.env.WORKSPACE_ROOT && fs.existsSync(path.join(process.env.WORKSPACE_ROOT, '.git'))) {
     return process.env.WORKSPACE_ROOT;
@@ -247,6 +287,23 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/projects' && req.method === 'GET') {
     const projects = getAgyProjects();
     return sendJson(res, { ok: true, projects, currentRepo: currentRepoPath });
+  }
+
+  // API: 依 Session ID 自動解析對應的 Git 專案
+  if (pathname === '/api/resolve-session' && req.method === 'GET') {
+    const convId = reqUrl.searchParams.get('conv');
+    const project = resolveSessionRepo(convId);
+    if (project) {
+      return sendJson(res, {
+        ok: true,
+        found: true,
+        projectId: project.id,
+        projectName: project.name,
+        repoPath: project.path,
+        isGit: project.isGit
+      });
+    }
+    return sendJson(res, { ok: true, found: false });
   }
 
   // API: 倉庫狀態檢查

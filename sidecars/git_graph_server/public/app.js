@@ -582,9 +582,49 @@
     }
   });
 
+  // AGY 對話 (Session) 即時追蹤與自動切換
+  let activeConvId = null;
+
+  function getCurrentConvId() {
+    return (
+      (window.sidecar && window.sidecar.conversationId) ||
+      new URLSearchParams(window.location.search).get('conversationId') ||
+      ''
+    );
+  }
+
+  async function syncActiveSessionRepo() {
+    const convId = getCurrentConvId();
+    if (!convId || convId === activeConvId) return;
+
+    activeConvId = convId;
+    try {
+      const res = await fetch(`/api/resolve-session?conv=${encodeURIComponent(convId)}`).then(r => r.json());
+      if (res.ok && res.found && res.repoPath && res.isGit) {
+        const normalizedTarget = res.repoPath.toLowerCase().replace(/\\/g, '/');
+        const normalizedCurrent = currentRepo ? currentRepo.toLowerCase().replace(/\\/g, '/') : '';
+        if (normalizedTarget !== normalizedCurrent) {
+          currentRepo = res.repoPath;
+          localStorage.setItem('agy_git_graph_repo', currentRepo);
+          await loadProjects();
+          const isGit = await loadRepoMeta();
+          if (isGit) {
+            await loadCommits();
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('自動同步 Session 專案失敗:', err);
+    }
+  }
+
+  // 定時輪詢檢查當前對話切換 (每 1.2 秒)
+  setInterval(syncActiveSessionRepo, 1200);
+
   // 初始啟動
   (async () => {
     await loadProjects();
+    await syncActiveSessionRepo();
     const isGit = await loadRepoMeta();
     if (isGit) {
       await loadCommits();
