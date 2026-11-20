@@ -11,6 +11,84 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+// 輔助函式：路徑正規化比對 (跨平台相容)
+function isSamePath(a, b) {
+  if (!a || !b) return false;
+  const normA = path.normalize(a).replace(/\\/g, '/').replace(/\/+$/, '');
+  const normB = path.normalize(b).replace(/\\/g, '/').replace(/\/+$/, '');
+  if (normA === normB) return true;
+  return normA.toLowerCase() === normB.toLowerCase();
+}
+
+// 解析 .gitmodules 內容取得子模組資訊
+function parseGitModules(content) {
+  const submodules = [];
+  let current = null;
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+    const sectionMatch = trimmed.match(/^\[submodule\s+"?([^"\]]+)"?\]$/i);
+    if (sectionMatch) {
+      if (current && current.relPath) submodules.push(current);
+      current = { name: sectionMatch[1].trim(), relPath: '' };
+      continue;
+    }
+    if (current) {
+      const kvMatch = trimmed.match(/^path\s*=\s*(.+)$/i);
+      if (kvMatch) {
+        current.relPath = kvMatch[1].trim().replace(/^["']|["']$/g, '');
+      }
+    }
+  }
+  if (current && current.relPath) submodules.push(current);
+  return submodules;
+}
+
+// 取得指定 Git 倉庫的所有 Submodules (支援遞迴子模組)
+function getSubmodules(repoPath, depth = 0) {
+  if (depth > 2) return [];
+  const submodules = [];
+  if (!repoPath || !fs.existsSync(repoPath)) return submodules;
+
+  const gitmodulesPath = path.join(repoPath, '.gitmodules');
+  if (!fs.existsSync(gitmodulesPath)) return submodules;
+
+  try {
+    const content = fs.readFileSync(gitmodulesPath, 'utf8');
+    const parsed = parseGitModules(content);
+    for (const item of parsed) {
+      const fullSubPath = path.normalize(path.join(repoPath, item.relPath));
+      const gitPath = path.join(fullSubPath, '.git');
+      const isGit = fs.existsSync(gitPath);
+      const subObj = {
+        name: item.name || item.relPath,
+        relPath: item.relPath.replace(/\\/g, '/'),
+        path: fullSubPath,
+        isGit
+      };
+      submodules.push(subObj);
+
+      // 若該子模組也是已初始化的 Git 倉庫，支援遞迴偵測巢狀子模組
+      if (isGit) {
+        const nested = getSubmodules(fullSubPath, depth + 1);
+        for (const n of nested) {
+          submodules.push({
+            name: `${subObj.name} / ${n.name}`,
+            relPath: `${subObj.relPath}/${n.relPath}`,
+            path: n.path,
+            isGit: n.isGit
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[Git Graph Sidecar] 解析 submodules 失敗 (${repoPath}):`, err.message);
+  }
+
+  return submodules;
+}
+
 // 初始預設倉庫路徑（自動尋找當前工作區或 AGY 已註冊的 Git 專案）
 function getAgyProjects() {
   const projects = [];
@@ -37,11 +115,13 @@ function getAgyProjects() {
                   }
                   p = path.normalize(p);
                   const isGit = fs.existsSync(path.join(p, '.git'));
+                  const submodules = isGit ? getSubmodules(p) : [];
                   projects.push({
                     id: data.id,
                     name: data.name,
                     path: p,
-                    isGit
+                    isGit,
+                    submodules
                   });
                 }
               }
@@ -293,9 +373,40 @@ const server = http.createServer(async (req, res) => {
   // 取得 query 參數中指定的 repo，若無則使用 currentRepoPath
   const queryRepo = reqUrl.searchParams.get('repo') || currentRepoPath;
 
-  // API: 取得 AGY 註冊專案清單
+  // API: 取得 AGY 註冊專案清單與 Submodules
   if (pathname === '/api/projects' && req.method === 'GET') {
     const projects = getAgyProjects();
+
+    // 檢查 currentRepoPath 是否已在清單中
+    let currentInProjects = false;
+    for (const p of projects) {
+      if (isSamePath(p.path, currentRepoPath)) {
+        currentInProjects = true;
+        break;
+      }
+      if (p.submodules) {
+        for (const sub of p.submodules) {
+          if (isSamePath(sub.path, currentRepoPath)) {
+            currentInProjects = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // 若當前工作區不在 projects 清單內 (例如 SSH 遠端 VM 目錄或自訂目錄)，動態補入
+    if (!currentInProjects && currentRepoPath && fs.existsSync(currentRepoPath)) {
+      const isGit = fs.existsSync(path.join(currentRepoPath, '.git'));
+      const submodules = isGit ? getSubmodules(currentRepoPath) : [];
+      projects.unshift({
+        id: 'current-workspace',
+        name: path.basename(currentRepoPath),
+        path: currentRepoPath,
+        isGit,
+        submodules
+      });
+    }
+
     return sendJson(res, { ok: true, projects, currentRepo: currentRepoPath });
   }
 
@@ -348,16 +459,20 @@ const server = http.createServer(async (req, res) => {
     const unstagedCount = statusLines.filter(l => /^.[MADRCU]/.test(l)).length;
     const untrackedCount = statusLines.filter(l => /^\?\?/.test(l)).length;
 
+    const targetRepo = topLevelRes.stdout || queryRepo;
+    const submodules = getSubmodules(targetRepo);
+
     return sendJson(res, {
       ok: true,
       isGit: true,
-      repoPath: topLevelRes.stdout || queryRepo,
+      repoPath: targetRepo,
       currentBranch: branchRes.stdout || 'HEAD',
       isClean: statusLines.length === 0,
       stagedCount,
       unstagedCount,
       untrackedCount,
-      remoteUrl: remoteRes.stdout || ''
+      remoteUrl: remoteRes.stdout || '',
+      submodules
     });
   }
 

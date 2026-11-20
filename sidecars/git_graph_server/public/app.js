@@ -80,6 +80,15 @@
     return date.toISOString().slice(0, 10);
   }
 
+  // 路徑比對輔助函式 (跨平台相容)
+  function isSamePath(a, b) {
+    if (!a || !b) return false;
+    const normA = a.replace(/\\/g, '/').replace(/\/+$/, '');
+    const normB = b.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (normA === normB) return true;
+    return normA.toLowerCase() === normB.toLowerCase();
+  }
+
   // 取得 API URL（自動攜帶 repo query）
   function apiUrl(endpoint, params = {}) {
     const url = new URL(endpoint, window.location.origin);
@@ -90,7 +99,7 @@
     return url.toString();
   }
 
-  // 載入 AGY 專案清單並填入下拉選單
+  // 載入 AGY 專案與 Submodules 清單並填入下拉選單
   async function loadProjects() {
     try {
       const res = await fetch('/api/projects').then(r => r.json());
@@ -99,14 +108,29 @@
         let hasSelected = false;
 
         res.projects.forEach(p => {
+          // 主專案 Option
           const opt = document.createElement('option');
           opt.value = p.path;
           opt.textContent = `📁 ${p.name}${p.isGit ? '' : ' (非Git)'}`;
-          if (currentRepo && currentRepo.toLowerCase().replace(/\\/g, '/') === p.path.toLowerCase().replace(/\\/g, '/')) {
+          if (isSamePath(currentRepo, p.path)) {
             opt.selected = true;
             hasSelected = true;
           }
           projectSelect.appendChild(opt);
+
+          // Submodules Options (縮排樹狀顯示)
+          if (Array.isArray(p.submodules) && p.submodules.length > 0) {
+            p.submodules.forEach(sub => {
+              const subOpt = document.createElement('option');
+              subOpt.value = sub.path;
+              subOpt.textContent = `  ↳ 📦 ${sub.name}${sub.isGit ? '' : ' (未初始化)'}`;
+              if (isSamePath(currentRepo, sub.path)) {
+                subOpt.selected = true;
+                hasSelected = true;
+              }
+              projectSelect.appendChild(subOpt);
+            });
+          }
         });
 
         // 若當前工作區不在專案內，顯示提示
@@ -153,15 +177,18 @@
       repoSwitchBar.classList.add('hidden');
       emptyState.classList.add('hidden');
 
-      // 嘗試選中對應的專案
+      // 嘗試選中對應的專案或 Submodule (優先精確比對，避免父專案前綴覆蓋)
       if (projectSelect) {
+        let matchedIdx = -1;
         for (let i = 0; i < projectSelect.options.length; i++) {
-          const optVal = projectSelect.options[i].value.toLowerCase().replace(/\\/g, '/');
-          const curVal = currentRepo.toLowerCase().replace(/\\/g, '/');
-          if (optVal === curVal || curVal.startsWith(optVal)) {
-            projectSelect.selectedIndex = i;
+          const optVal = projectSelect.options[i].value;
+          if (isSamePath(optVal, currentRepo)) {
+            matchedIdx = i;
             break;
           }
+        }
+        if (matchedIdx !== -1) {
+          projectSelect.selectedIndex = matchedIdx;
         }
       }
       branchBadgeEl.textContent = statusRes.currentBranch;
