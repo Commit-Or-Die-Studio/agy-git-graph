@@ -17,7 +17,7 @@
   const PADDING_LEFT = 12;
 
   // 狀態變數
-  let currentRepo = '';
+  let currentRepo = localStorage.getItem('agy_git_graph_repo') || '';
   let allCommits = [];
   let allLinks = [];
   let maxLanes = 1;
@@ -144,6 +144,9 @@
     localStorage.setItem('agy_git_graph_repo', currentRepo);
     repoPathInput.value = currentRepo;
     repoSwitchBar.classList.add('hidden');
+    updateProjectButtonText();
+    loadingState.classList.remove('hidden');
+    emptyState.classList.add('hidden');
     await loadRepoMeta();
     await loadCommits();
     updateProjectButtonText();
@@ -469,6 +472,15 @@
       ]);
 
       if (!statusRes.ok || !statusRes.isGit) {
+        // 若當前尚未解析出任何 repo 路徑，維持載入/偵測狀態，避免閃爍出現「無 Git 倉庫」
+        if (!currentRepo) {
+          branchBadgeEl.textContent = '...';
+          workingTreeStatusEl.innerHTML = '<span style="color:#89b4fa;">● 正在偵測對話工作區...</span>';
+          loadingState.classList.remove('hidden');
+          emptyState.classList.add('hidden');
+          return false;
+        }
+
         branchBadgeEl.textContent = '無';
         workingTreeStatusEl.innerHTML = '<span style="color:#6c7086;">● 當前對話無 Git 倉庫</span>';
         commitsCountEl.textContent = '0 commits';
@@ -1250,6 +1262,10 @@
           currentRepo = res.repoPath;
           lastStateHash = null;
           localStorage.setItem('agy_git_graph_repo', currentRepo);
+          updateProjectButtonText();
+          loadingState.classList.remove('hidden');
+          emptyState.classList.add('hidden');
+          loadingState.querySelector('p').textContent = '正在載入 Git 歷史記錄...';
           await loadProjects();
           const isGit = await loadRepoMeta();
           if (isGit) {
@@ -1298,6 +1314,10 @@
 
   // 初始啟動
   (async () => {
+    updateProjectButtonText();
+    loadingState.classList.remove('hidden');
+    emptyState.classList.add('hidden');
+
     await loadProjects();
     await syncActiveSessionRepo();
     const isGit = await loadRepoMeta();
