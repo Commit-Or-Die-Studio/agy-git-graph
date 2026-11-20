@@ -373,41 +373,69 @@ const server = http.createServer(async (req, res) => {
   // 取得 query 參數中指定的 repo，若無則使用 currentRepoPath
   const queryRepo = reqUrl.searchParams.get('repo') || currentRepoPath;
 
-  // API: 取得 AGY 註冊專案清單與 Submodules
+  // API: 取得 AGY 註冊專案清單與 Submodules (依當前工作區與 Session 分組)
   if (pathname === '/api/projects' && req.method === 'GET') {
-    const projects = getAgyProjects();
+    const allProjects = getAgyProjects();
 
-    // 檢查 currentRepoPath 是否已在清單中
-    let currentInProjects = false;
-    for (const p of projects) {
-      if (isSamePath(p.path, currentRepoPath)) {
-        currentInProjects = true;
-        break;
+    // 依據 path 進行去重
+    const uniqueProjects = [];
+    const seenPaths = new Set();
+    for (const p of allProjects) {
+      const norm = p.path.toLowerCase().replace(/\\/g, '/');
+      if (!seenPaths.has(norm)) {
+        seenPaths.add(norm);
+        uniqueProjects.push(p);
       }
-      if (p.submodules) {
-        for (const sub of p.submodules) {
-          if (isSamePath(sub.path, currentRepoPath)) {
-            currentInProjects = true;
-            break;
+    }
+
+    // 尋找當前工作區對應之專案 (優先比對主目錄與子模組目錄)
+    let currentProject = null;
+    let currentTarget = currentRepoPath;
+
+    if (currentTarget) {
+      for (const p of uniqueProjects) {
+        if (isSamePath(p.path, currentTarget)) {
+          currentProject = p;
+          break;
+        }
+        if (p.submodules) {
+          for (const sub of p.submodules) {
+            if (isSamePath(sub.path, currentTarget)) {
+              currentProject = p;
+              break;
+            }
           }
         }
+        if (currentProject) break;
       }
     }
 
-    // 若當前工作區不在 projects 清單內 (例如 SSH 遠端 VM 目錄或自訂目錄)，動態補入
-    if (!currentInProjects && currentRepoPath && fs.existsSync(currentRepoPath)) {
-      const isGit = fs.existsSync(path.join(currentRepoPath, '.git'));
-      const submodules = isGit ? getSubmodules(currentRepoPath) : [];
-      projects.unshift({
+    // 若 currentTarget 不在已知專案中，但本機路徑存在，動態構建當前專案
+    if (!currentProject && currentTarget && fs.existsSync(currentTarget)) {
+      const isGit = fs.existsSync(path.join(currentTarget, '.git'));
+      const submodules = isGit ? getSubmodules(currentTarget) : [];
+      currentProject = {
         id: 'current-workspace',
-        name: path.basename(currentRepoPath),
-        path: currentRepoPath,
+        name: path.basename(currentTarget),
+        path: currentTarget,
         isGit,
         submodules
-      });
+      };
     }
 
-    return sendJson(res, { ok: true, projects, currentRepo: currentRepoPath });
+    // 其餘 Session 專案 (排除 currentProject，防止重複)
+    const sessionProjects = uniqueProjects.filter(p => {
+      if (!currentProject) return true;
+      return !isSamePath(p.path, currentProject.path);
+    });
+
+    return sendJson(res, {
+      ok: true,
+      currentRepo: currentRepoPath,
+      currentProject,
+      sessionProjects,
+      projects: currentProject ? [currentProject, ...sessionProjects] : sessionProjects
+    });
   }
 
   // API: 依 Session ID 自動解析對應的 Git 專案

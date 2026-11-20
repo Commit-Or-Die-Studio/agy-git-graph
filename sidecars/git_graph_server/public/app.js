@@ -99,28 +99,35 @@
     return url.toString();
   }
 
-  // 載入 AGY 專案與 Submodules 清單並填入下拉選單
+  // 載入 AGY 專案與 Submodules 清單並填入分組下拉選單
   async function loadProjects() {
     try {
       const res = await fetch('/api/projects').then(r => r.json());
-      if (res.ok && Array.isArray(res.projects)) {
+      if (res.ok) {
         projectSelect.innerHTML = '';
         let hasSelected = false;
 
-        res.projects.forEach(p => {
-          // 主專案 Option
+        const currentProj = res.currentProject;
+        const sessionProjs = Array.isArray(res.sessionProjects) ? res.sessionProjects : [];
+
+        // 1. 第一分組：當前工作區 (本資料夾 Repo + Submodules)
+        if (currentProj) {
+          const currentGroup = document.createElement('optgroup');
+          currentGroup.label = '📍 當前工作區 (本資料夾)';
+
+          // 主 Repo Option
           const opt = document.createElement('option');
-          opt.value = p.path;
-          opt.textContent = `📁 ${p.name}${p.isGit ? '' : ' (非Git)'}`;
-          if (isSamePath(currentRepo, p.path)) {
+          opt.value = currentProj.path;
+          opt.textContent = `📁 ${currentProj.name}${currentProj.isGit ? '' : ' (非Git)'}`;
+          if (isSamePath(currentRepo, currentProj.path)) {
             opt.selected = true;
             hasSelected = true;
           }
-          projectSelect.appendChild(opt);
+          currentGroup.appendChild(opt);
 
-          // Submodules Options (縮排樹狀顯示)
-          if (Array.isArray(p.submodules) && p.submodules.length > 0) {
-            p.submodules.forEach(sub => {
+          // Submodules Options
+          if (Array.isArray(currentProj.submodules) && currentProj.submodules.length > 0) {
+            currentProj.submodules.forEach(sub => {
               const subOpt = document.createElement('option');
               subOpt.value = sub.path;
               subOpt.textContent = `  ↳ 📦 ${sub.name}${sub.isGit ? '' : ' (未初始化)'}`;
@@ -128,13 +135,47 @@
                 subOpt.selected = true;
                 hasSelected = true;
               }
-              projectSelect.appendChild(subOpt);
+              currentGroup.appendChild(subOpt);
             });
           }
-        });
 
-        // 若當前工作區不在專案內，顯示提示
-        if (!hasSelected) {
+          projectSelect.appendChild(currentGroup);
+        }
+
+        // 2. 第二分組：對話工作區 (Session Repos)
+        if (sessionProjs.length > 0) {
+          const sessionGroup = document.createElement('optgroup');
+          sessionGroup.label = '💬 對話工作區 (Session Repos)';
+
+          sessionProjs.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.path;
+            opt.textContent = `📁 ${p.name}${p.isGit ? '' : ' (非Git)'}`;
+            if (isSamePath(currentRepo, p.path)) {
+              opt.selected = true;
+              hasSelected = true;
+            }
+            sessionGroup.appendChild(opt);
+
+            if (Array.isArray(p.submodules) && p.submodules.length > 0) {
+              p.submodules.forEach(sub => {
+                const subOpt = document.createElement('option');
+                subOpt.value = sub.path;
+                subOpt.textContent = `  ↳ 📦 ${sub.name}${sub.isGit ? '' : ' (未初始化)'}`;
+                if (isSamePath(currentRepo, sub.path)) {
+                  subOpt.selected = true;
+                  hasSelected = true;
+                }
+                sessionGroup.appendChild(subOpt);
+              });
+            }
+          });
+
+          projectSelect.appendChild(sessionGroup);
+        }
+
+        // 3. 預設/未選中提示
+        if (!hasSelected && !currentProj) {
           const noneOpt = document.createElement('option');
           noneOpt.value = '';
           noneOpt.textContent = '📂 (無關聯專案)';
@@ -142,10 +183,14 @@
           projectSelect.insertBefore(noneOpt, projectSelect.firstChild);
         }
 
+        // 4. 自訂本機路徑
+        const actionGroup = document.createElement('optgroup');
+        actionGroup.label = '⚙️ 其他操作';
         const customOpt = document.createElement('option');
         customOpt.value = '__custom__';
         customOpt.textContent = '➕ 自訂本機路徑...';
-        projectSelect.appendChild(customOpt);
+        actionGroup.appendChild(customOpt);
+        projectSelect.appendChild(actionGroup);
       }
     } catch (err) {
       console.warn('載入專案清單失敗:', err);

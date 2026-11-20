@@ -66,13 +66,13 @@ body, html {
 
 .project-dropdown {
   background: var(--bg-color);
-  color: var(--text-color);
+  color: var(--fg-color);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 3px 6px;
   font-size: 12px;
   font-weight: 600;
-  max-width: 220px;
+  max-width: 240px;
   cursor: pointer;
   outline: none;
   font-family: inherit;
@@ -80,6 +80,22 @@ body, html {
 
 .project-dropdown:hover, .project-dropdown:focus {
   border-color: var(--accent-color);
+}
+
+.project-dropdown optgroup {
+  background-color: var(--surface-color);
+  color: var(--accent-color);
+  font-weight: 700;
+  font-size: 11px;
+  padding: 4px 2px;
+}
+
+.project-dropdown option {
+  background-color: var(--bg-color);
+  color: var(--fg-color);
+  font-weight: normal;
+  font-size: 12px;
+  padding: 3px 6px;
 }
 
 .repo-icon {
