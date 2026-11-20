@@ -1,0 +1,407 @@
+import http from 'node:http';
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// 初始預設倉庫路徑（取當前工作目錄或上層專案根目錄）
+let currentRepoPath = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../../');
+
+// 解析 CLI 參數與環境變數取得 Port
+function getPort() {
+  const envPort = process.env.ANTIGRAVITY_SIDECAR_WEB_PORT || process.env.PORT;
+  if (envPort) return parseInt(envPort, 10);
+  const argIdx = process.argv.indexOf('--port');
+  if (argIdx !== -1 && process.argv[argIdx + 1]) {
+    return parseInt(process.argv[argIdx + 1], 10);
+  }
+  return 52888;
+}
+
+// 執行 Git 命令
+async function runGit(args, cwd = currentRepoPath) {
+  try {
+    const { stdout, stderr } = await execFileAsync('git', args, {
+      cwd,
+      maxBuffer: 20 * 1024 * 1024,
+      windowsHide: true,
+      encoding: 'utf8'
+    });
+    return { ok: true, stdout: stdout.trim(), stderr: stderr.trim() };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err.message,
+      stderr: err.stderr ? err.stderr.trim() : '',
+      stdout: err.stdout ? err.stdout.trim() : ''
+    };
+  }
+}
+
+// 解析 Refs (裝飾標籤：HEAD、分支、遠端分支、Tag)
+function parseRefs(refStr) {
+  if (!refStr) return [];
+  const clean = refStr.replace(/^\s*\(/, '').replace(/\)\s*$/, '').trim();
+  if (!clean) return [];
+
+  const parts = clean.split(',').map(s => s.trim());
+  const badges = [];
+
+  for (const part of parts) {
+    if (part.startsWith('HEAD -> ')) {
+      badges.push({ type: 'head', name: part.replace('HEAD -> ', '').trim() });
+    } else if (part === 'HEAD') {
+      badges.push({ type: 'head', name: 'HEAD' });
+    } else if (part.startsWith('tag: ')) {
+      badges.push({ type: 'tag', name: part.replace('tag: ', '').trim() });
+    } else if (part.startsWith('refs/tags/')) {
+      badges.push({ type: 'tag', name: part.replace('refs/tags/', '').trim() });
+    } else if (part.includes('/')) {
+      badges.push({ type: 'remote', name: part });
+    } else {
+      badges.push({ type: 'branch', name: part });
+    }
+  }
+  return badges;
+}
+
+// 分支圖軌道 (Lanes) 與連線 (Links) 計算演算法
+function calculateGraphLayout(commits) {
+  const lanes = [];
+  const commitMap = new Map();
+
+  // 第一階段：決定每個 commit 所在的 column (x)
+  for (let row = 0; row < commits.length; row++) {
+    const commit = commits[row];
+    commitMap.set(commit.hash, commit);
+
+    let laneIndex = lanes.indexOf(commit.hash);
+    if (laneIndex === -1) {
+      laneIndex = lanes.findIndex(x => x === null);
+      if (laneIndex === -1) {
+        laneIndex = lanes.length;
+        lanes.push(commit.hash);
+      } else {
+        lanes[laneIndex] = commit.hash;
+      }
+    }
+
+    commit.x = laneIndex;
+    commit.y = row;
+
+    if (commit.parents && commit.parents.length > 0) {
+      lanes[laneIndex] = commit.parents[0];
+      for (let i = 1; i < commit.parents.length; i++) {
+        const pHash = commit.parents[i];
+        let pLane = lanes.indexOf(pHash);
+        if (pLane === -1) {
+          pLane = lanes.findIndex(x => x === null);
+          if (pLane === -1) {
+            pLane = lanes.length;
+            lanes.push(pHash);
+          } else {
+            lanes[pLane] = pHash;
+          }
+        }
+      }
+    } else {
+      lanes[laneIndex] = null;
+    }
+  }
+
+  // 第二階段：連線生成 (從子 commit 連到父 commit)
+  const links = [];
+  for (let row = 0; row < commits.length; row++) {
+    const commit = commits[row];
+    if (!commit.parents) continue;
+
+    for (let pIdx = 0; pIdx < commit.parents.length; pIdx++) {
+      const pHash = commit.parents[pIdx];
+      const parent = commitMap.get(pHash);
+      if (parent) {
+        links.push({
+          fromX: commit.x,
+          fromY: commit.y,
+          toX: parent.x,
+          toY: parent.y,
+          isMerge: pIdx > 0,
+          colorIndex: pIdx === 0 ? commit.x : parent.x
+        });
+      }
+    }
+  }
+
+  const maxLanes = Math.max(1, ...commits.map(c => c.x + 1));
+  return { commits, links, maxLanes };
+}
+
+// 靜態檔案類型對應
+const MIME_TYPES = {
+  '.html': 'text/html; charset=UTF-8',
+  '.css': 'text/css; charset=UTF-8',
+  '.js': 'application/javascript; charset=UTF-8',
+  '.json': 'application/json; charset=UTF-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon'
+};
+
+// 輔助函式：發送 JSON
+function sendJson(res, data, status = 200) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=UTF-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
+  res.end(JSON.stringify(data));
+}
+
+// 輔助函式：發送靜態檔案
+function serveStatic(req, res, filePath) {
+  fs.stat(filePath, (err, stats) => {
+    if (err || !stats.isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Not Found');
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache'
+    });
+    fs.createReadStream(filePath).pipe(res);
+  });
+}
+
+// 建立 HTTP 伺服器
+const server = http.createServer(async (req, res) => {
+  const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const pathname = reqUrl.pathname;
+
+  // CORS 預檢請求
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    });
+    return res.end();
+  }
+
+  // 取得 query 參數中指定的 repo，若無則使用 currentRepoPath
+  const queryRepo = reqUrl.searchParams.get('repo') || currentRepoPath;
+
+  // API: 倉庫狀態檢查
+  if (pathname === '/api/status' && req.method === 'GET') {
+    const isGit = await runGit(['rev-parse', '--is-inside-work-tree'], queryRepo);
+    if (!isGit.ok) {
+      return sendJson(res, {
+        ok: false,
+        isGit: false,
+        repoPath: queryRepo,
+        error: isGit.error || 'Not a git repository'
+      });
+    }
+
+    const [branchRes, topLevelRes, statusRes, remoteRes] = await Promise.all([
+      runGit(['rev-parse', '--abbrev-ref', 'HEAD'], queryRepo),
+      runGit(['rev-parse', '--show-toplevel'], queryRepo),
+      runGit(['status', '--porcelain'], queryRepo),
+      runGit(['config', '--get', 'remote.origin.url'], queryRepo)
+    ]);
+
+    const statusLines = (statusRes.stdout || '').split('\n').filter(Boolean);
+    const stagedCount = statusLines.filter(l => /^[MADRC]/.test(l)).length;
+    const unstagedCount = statusLines.filter(l => /^.[MADRCU]/.test(l)).length;
+    const untrackedCount = statusLines.filter(l => /^\?\?/.test(l)).length;
+
+    return sendJson(res, {
+      ok: true,
+      isGit: true,
+      repoPath: topLevelRes.stdout || queryRepo,
+      currentBranch: branchRes.stdout || 'HEAD',
+      isClean: statusLines.length === 0,
+      stagedCount,
+      unstagedCount,
+      untrackedCount,
+      remoteUrl: remoteRes.stdout || ''
+    });
+  }
+
+  // API: 取得分支清單
+  if (pathname === '/api/branches' && req.method === 'GET') {
+    const branchesRes = await runGit(['branch', '-a', '--format=%(refname:short)|%(HEAD)'], queryRepo);
+    if (!branchesRes.ok) {
+      return sendJson(res, { ok: false, error: branchesRes.error }, 500);
+    }
+    const lines = (branchesRes.stdout || '').split('\n').filter(Boolean);
+    const branches = lines.map(line => {
+      const [name, isHead] = line.split('|');
+      return {
+        name,
+        isHead: isHead === '*',
+        isRemote: name.startsWith('origin/') || name.includes('/')
+      };
+    });
+    return sendJson(res, { ok: true, branches });
+  }
+
+  // API: 取得 Commit 分支走向資料
+  if (pathname === '/api/commits' && req.method === 'GET') {
+    const limit = parseInt(reqUrl.searchParams.get('limit') || '150', 10);
+    const branch = reqUrl.searchParams.get('branch') || 'all';
+
+    const args = ['log', '--date=iso-strict', '--pretty=format:%H|%h|%P|%an|%ae|%aI|%s|%d', `-n${limit}`];
+    if (branch === 'all') {
+      args.splice(1, 0, '--all');
+    } else {
+      args.splice(1, 0, branch);
+    }
+
+    const logRes = await runGit(args, queryRepo);
+    if (!logRes.ok) {
+      return sendJson(res, { ok: false, error: logRes.error }, 500);
+    }
+
+    const lines = (logRes.stdout || '').split('\n').filter(Boolean);
+    const rawCommits = lines.map(line => {
+      const parts = line.split('|');
+      const hash = parts[0] || '';
+      const shortHash = parts[1] || '';
+      const parents = parts[2] ? parts[2].split(' ').filter(Boolean) : [];
+      const author = parts[3] || '';
+      const email = parts[4] || '';
+      const date = parts[5] || '';
+      const subject = parts[6] || '';
+      const refStr = parts.slice(7).join('|') || '';
+      const refs = parseRefs(refStr);
+
+      return {
+        hash,
+        shortHash,
+        parents,
+        author,
+        email,
+        date,
+        subject,
+        refs
+      };
+    });
+
+    const layout = calculateGraphLayout(rawCommits);
+    return sendJson(res, {
+      ok: true,
+      repoPath: queryRepo,
+      commits: layout.commits,
+      links: layout.links,
+      maxLanes: layout.maxLanes,
+      total: layout.commits.length
+    });
+  }
+
+  // API: 取得單一 Commit 詳情與變更檔案清單
+  if (pathname.startsWith('/api/commit/') && req.method === 'GET') {
+    const hash = pathname.replace('/api/commit/', '').trim();
+    if (!hash) return sendJson(res, { ok: false, error: 'Commit hash is required' }, 400);
+
+    const [detailsRes, filesRes] = await Promise.all([
+      runGit(['show', '-s', '--format=%H|%h|%an|%ae|%aI|%s%n%b', hash], queryRepo),
+      runGit(['diff-tree', '--no-commit-id', '--name-status', '-r', hash], queryRepo)
+    ]);
+
+    if (!detailsRes.ok) {
+      return sendJson(res, { ok: false, error: detailsRes.error }, 500);
+    }
+
+    const firstLineEnd = detailsRes.stdout.indexOf('\n');
+    let header = detailsRes.stdout;
+    let body = '';
+    if (firstLineEnd !== -1) {
+      header = detailsRes.stdout.slice(0, firstLineEnd);
+      body = detailsRes.stdout.slice(firstLineEnd + 1).trim();
+    }
+    const [fullHash, shortHash, author, email, date, subject] = header.split('|');
+
+    const fileLines = (filesRes.stdout || '').split('\n').filter(Boolean);
+    const files = fileLines.map(line => {
+      const parts = line.split('\t');
+      return {
+        status: parts[0] || 'M',
+        path: parts[1] || parts[0]
+      };
+    });
+
+    return sendJson(res, {
+      ok: true,
+      hash: fullHash || hash,
+      shortHash: shortHash || hash.substring(0, 7),
+      author,
+      email,
+      date,
+      subject,
+      body,
+      files
+    });
+  }
+
+  // API: 取得單一檔案的 Diff
+  if (pathname === '/api/diff' && req.method === 'GET') {
+    const hash = reqUrl.searchParams.get('hash');
+    const filePath = reqUrl.searchParams.get('file');
+    if (!hash || !filePath) {
+      return sendJson(res, { ok: false, error: 'hash and file are required' }, 400);
+    }
+
+    const diffRes = await runGit(['show', '--pretty=format:', hash, '--', filePath], queryRepo);
+    return sendJson(res, {
+      ok: true,
+      hash,
+      file: filePath,
+      diff: diffRes.stdout || ''
+    });
+  }
+
+  // API: 切換目標 Repository
+  if (pathname === '/api/set-repo' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const target = data.repoPath;
+        if (!target) return sendJson(res, { ok: false, error: 'repoPath is required' }, 400);
+
+        const testRes = await runGit(['rev-parse', '--show-toplevel'], target);
+        if (!testRes.ok) {
+          return sendJson(res, { ok: false, error: `Invalid git repository: ${testRes.error}` }, 400);
+        }
+
+        currentRepoPath = testRes.stdout;
+        return sendJson(res, { ok: true, repoPath: currentRepoPath });
+      } catch (err) {
+        return sendJson(res, { ok: false, error: err.message }, 500);
+      }
+    });
+    return;
+  }
+
+  // 靜態檔案路由
+  let targetFile = pathname === '/' ? 'index.html' : pathname;
+  targetFile = path.normalize(targetFile).replace(/^(\.\.[/\\])+/, '');
+  const absPath = path.join(PUBLIC_DIR, targetFile);
+
+  serveStatic(req, res, absPath);
+});
+
+const PORT = getPort();
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`[Git Graph Sidecar] Server running on http://127.0.0.1:${PORT}`);
+  console.log(`[Git Graph Sidecar] Target repository: ${currentRepoPath}`);
+});
