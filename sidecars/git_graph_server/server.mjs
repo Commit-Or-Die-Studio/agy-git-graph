@@ -20,7 +20,7 @@ function getAgyProjects() {
       for (const file of files) {
         if (file.endsWith('.json')) {
           try {
-            const raw = fs.readFileSync(path.join(configProjectsDir, file), 'utf8');
+            const raw = fs.readFileSync(path.join(configProjectsDir, file), 'utf8').replace(/^\uFEFF/, '');
             const data = JSON.parse(raw);
             if (data.projectResources && Array.isArray(data.projectResources.resources)) {
               for (const res of data.projectResources.resources) {
