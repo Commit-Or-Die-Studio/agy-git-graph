@@ -44,6 +44,10 @@ flowchart TD
 npm run package
 ```
 驗證 `dist/` 生成以下帶有版本號的發行包：
+- `dist/agy-git-graph-v<VERSION>-setup.exe` (Windows 原生雙擊安裝檔)
+- `dist/agy-git-graph-v<VERSION>-uninstall.exe` (Windows 雙擊解除安裝檔)
+- `dist/agy-git-graph-v<VERSION>-setup.sh` (Linux / macOS 自動安裝檔)
+- `dist/agy-git-graph-v<VERSION>-uninstall.sh` (Linux / macOS 自動解除安裝檔)
 - `dist/agy-git-graph-v<VERSION>.zip` (通用 ZIP 壓縮包)
 - `dist/agy-git-graph-v<VERSION>.tar.gz` (Linux / macOS 壓縮包)
 - `dist/SHA256SUMS.txt` (校驗碼清單)
