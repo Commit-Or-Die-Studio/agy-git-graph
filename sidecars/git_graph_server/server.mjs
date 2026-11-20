@@ -800,12 +800,27 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, { ok: true, branches });
   }
 
-  // API: 取得 Commit 分支走向資料
+// Commit Log 記憶體快取 (避免龐大倉庫重複計算拓撲佈局)
+const commitLogCache = new Map(); // key -> { timestamp, data }
+
+// 取得 Commit 分支走向資料
   if (pathname === '/api/commits' && req.method === 'GET') {
     const limit = parseInt(reqUrl.searchParams.get('limit') || '150', 10);
     const branch = reqUrl.searchParams.get('branch') || 'all';
 
-    const args = ['log', '--date=iso-strict', '--pretty=format:%H|%h|%P|%an|%ae|%aI|%s|%d', `-n${limit}`];
+    // 先取得目前 HEAD hash 作為快取版本校驗
+    const headRes = await runGit(['rev-parse', 'HEAD'], queryRepo);
+    const headHash = headRes.stdout ? headRes.stdout.trim() : '';
+    const cacheKey = `${queryRepo}:${branch}:${limit}:${headHash}`;
+
+    if (headHash && commitLogCache.has(cacheKey)) {
+      const cached = commitLogCache.get(cacheKey);
+      if (Date.now() - cached.timestamp < 60000) {
+        return sendJson(res, cached.data);
+      }
+    }
+
+    const args = ['log', '--topo-order', '--no-color', '--date=iso-strict', '--pretty=format:%H|%h|%P|%an|%ae|%aI|%s|%d', `-n${limit}`];
     if (branch === 'all') {
       args.splice(1, 0, '--all');
     } else {
@@ -843,14 +858,25 @@ const server = http.createServer(async (req, res) => {
     });
 
     const layout = calculateGraphLayout(rawCommits);
-    return sendJson(res, {
+    const responseData = {
       ok: true,
       repoPath: queryRepo,
       commits: layout.commits,
       links: layout.links,
       maxLanes: layout.maxLanes,
       total: layout.commits.length
-    });
+    };
+
+    if (cacheKey && headHash) {
+      // 限制快取大小，避免記憶體無限膨脹
+      if (commitLogCache.size > 20) {
+        const oldestKey = commitLogCache.keys().next().value;
+        commitLogCache.delete(oldestKey);
+      }
+      commitLogCache.set(cacheKey, { timestamp: Date.now(), data: responseData });
+    }
+
+    return sendJson(res, responseData);
   }
 
   // API: 取得單一 Commit 詳情與變更檔案清單

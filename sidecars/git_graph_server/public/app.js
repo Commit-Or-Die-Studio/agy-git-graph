@@ -546,7 +546,7 @@
     try {
       const res = await fetch(apiUrl('/api/commits', {
         branch: currentBranchFilter,
-        limit: 250
+        limit: 150
       })).then(r => r.json());
 
       if (!res.ok) {
