@@ -309,15 +309,17 @@
       submenu.appendChild(emptyItem);
     }
 
-    // 當游標移入時檢查螢幕右側邊界，若寬度不足則自動向左展開
+    // 智慧定位子選單，防止超出視窗邊界或跑至螢幕外
     sessionParent.addEventListener('mouseenter', () => {
       const rect = sessionParent.getBoundingClientRect();
-      if (rect.right + 230 > window.innerWidth) {
-        submenu.style.left = 'auto';
-        submenu.style.right = '100%';
-      } else {
+      // 若右側空間充裕（>= 230px），向右展開；否則貼齊視窗可視範圍，絕不跑到負座標
+      if (rect.right + 230 <= window.innerWidth) {
         submenu.style.left = '100%';
         submenu.style.right = 'auto';
+      } else {
+        submenu.style.left = 'auto';
+        submenu.style.right = '0';
+        submenu.style.top = '100%';
       }
     });
 

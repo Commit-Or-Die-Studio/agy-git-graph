@@ -170,7 +170,7 @@ TARGET_DIR="$HOME/.gemini/config/plugins/agy-git-graph"
 
 if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
   echo "正在終止可能執行的背景進程..."
-  pkill -f "git_graph_server.*server.mjs" 2>/dev/null || true
+  pkill -9 -f "server\.mjs" 2>/dev/null || true
   if [ -d "$TARGET_DIR" ]; then
     rm -rf "$TARGET_DIR"
     echo "🎉 AGY Git Graph 已成功解除安裝！"
@@ -186,7 +186,7 @@ echo "========================================================"
 echo ""
 
 echo "[1/3] 正在終止可能執行的舊背景進程..."
-pkill -f "git_graph_server.*server.mjs" 2>/dev/null || true
+pkill -9 -f "server\.mjs" 2>/dev/null || true
 
 echo "[2/3] 正在檢查與建立目標目錄: $TARGET_DIR..."
 mkdir -p "$HOME/.gemini/config/plugins"
@@ -226,7 +226,7 @@ if [ "$1" != "-y" ] && [ "$1" != "--quiet" ]; then
 fi
 
 echo "正在終止背景進程..."
-pkill -f "git_graph_server.*server.mjs" 2>/dev/null || true
+pkill -9 -f "server\.mjs" 2>/dev/null || true
 
 if [ -d "$TARGET_DIR" ]; then
   rm -rf "$TARGET_DIR"
