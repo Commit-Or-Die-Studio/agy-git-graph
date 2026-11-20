@@ -775,9 +775,13 @@
 
       row.appendChild(content);
 
-      // 點擊事件：展開詳情 Drawer
+      // 點擊事件：展開/收合詳情 Drawer (再次點擊相同 Commit 則關閉)
       row.addEventListener('click', () => {
-        openCommitDetail(commit.hash);
+        if (selectedCommitHash === commit.hash && !detailDrawer.classList.contains('hidden')) {
+          closeDrawer();
+        } else {
+          openCommitDetail(commit.hash);
+        }
       });
 
       fragment.appendChild(row);
@@ -1132,18 +1136,24 @@
     }
   });
 
-  btnCloseDrawer.addEventListener('click', () => {
+  function closeDrawer() {
     detailDrawer.classList.add('hidden');
     selectedCommitHash = null;
     if (statusBar) statusBar.classList.remove('selected');
     detailHash.classList.remove('badge-working');
     document.querySelectorAll('.commit-row.selected').forEach(r => r.classList.remove('selected'));
-  });
+  }
 
-  // 點擊狀態列檢視未提交的工作區變更 (Working Tree)
+  btnCloseDrawer.addEventListener('click', closeDrawer);
+
+  // 點擊狀態列檢視未提交的工作區變更 (Working Tree，再次點擊則關閉)
   if (statusBar) {
     statusBar.addEventListener('click', () => {
-      openWorkingTreeDetail();
+      if (selectedCommitHash === 'WORKING' && !detailDrawer.classList.contains('hidden')) {
+        closeDrawer();
+      } else {
+        openWorkingTreeDetail();
+      }
     });
   }
 
