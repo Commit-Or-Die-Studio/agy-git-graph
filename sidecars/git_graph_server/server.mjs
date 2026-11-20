@@ -430,7 +430,8 @@ function parseRefs(refStr) {
 
   for (const part of parts) {
     if (part.startsWith('HEAD -> ')) {
-      badges.push({ type: 'head', name: `HEAD -> ${part.replace('HEAD -> ', '').trim()}`, isHead: true });
+      const branchName = part.replace('HEAD -> ', '').trim();
+      badges.push({ type: 'head', name: branchName, isHead: true });
     } else if (part === 'HEAD') {
       badges.push({ type: 'head', name: 'HEAD', isHead: true });
     } else if (part.startsWith('tag: ')) {
@@ -438,7 +439,10 @@ function parseRefs(refStr) {
     } else if (part.startsWith('refs/tags/')) {
       badges.push({ type: 'tag', name: part.replace('refs/tags/', '').trim() });
     } else if (part.includes('/')) {
-      badges.push({ type: 'remote', name: part });
+      // 忽略 origin/HEAD 冗餘指標 (已有對應的遠端分支)
+      if (!part.endsWith('/HEAD')) {
+        badges.push({ type: 'remote', name: part });
+      }
     } else {
       badges.push({ type: 'branch', name: part });
     }

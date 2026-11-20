@@ -520,10 +520,38 @@ body, html {
   box-shadow: 0 0 6px rgba(203, 166, 247, 0.3);
 }
 
+.badge-head-synced {
+  background: linear-gradient(90deg, rgba(203, 166, 247, 0.22) 0%, rgba(137, 180, 250, 0.22) 100%);
+  color: #cba6f7;
+  border: 1px solid rgba(203, 166, 247, 0.85);
+  border-right-color: rgba(137, 180, 250, 0.85);
+  font-weight: 700;
+  box-shadow: 0 0 6px rgba(203, 166, 247, 0.3);
+}
+
+.badge-head-synced .badge-icon-cloud {
+  color: #89b4fa;
+  font-weight: 600;
+  margin-left: 3px;
+}
+
 .badge-branch {
   background-color: rgba(166, 227, 161, 0.2);
   color: #a6e3a1;
   border: 1px solid #a6e3a1;
+}
+
+.badge-branch-synced {
+  background: linear-gradient(90deg, rgba(166, 227, 161, 0.2) 0%, rgba(137, 180, 250, 0.2) 100%);
+  color: #a6e3a1;
+  border: 1px solid rgba(166, 227, 161, 0.85);
+  border-right-color: rgba(137, 180, 250, 0.85);
+}
+
+.badge-branch-synced .badge-icon-cloud {
+  color: #89b4fa;
+  font-weight: 600;
+  margin-left: 3px;
 }
 
 .badge-remote {
@@ -565,6 +593,7 @@ body, html {
 
 .commit-date {
   font-size: 10px;
+  white-space: nowrap;
 }
 
 .commit-hash {

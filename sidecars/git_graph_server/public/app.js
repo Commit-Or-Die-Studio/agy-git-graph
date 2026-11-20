@@ -68,19 +68,18 @@
 
   let currentDiffFile = '';
 
-  // 時間格式化 (相對時間)
-  function formatRelativeTime(dateStr) {
+  // 時間格式化 (直接顯示絕對日期時間 YYYY-MM-DD HH:mm)
+  function formatCommitDate(dateStr) {
     if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffSec = Math.floor((now - date) / 1000);
-
-    if (diffSec < 60) return '剛剛';
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分鐘前`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小時前`;
-    if (diffSec < 2592000) return `${Math.floor(diffSec / 86400)} 天前`;
-
-    return date.toISOString().slice(0, 10);
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const pad = (n) => String(n).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const min = pad(d.getMinutes());
+    return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
   }
 
   // 路徑比對輔助函式 (跨平台相容)
@@ -722,26 +721,81 @@
 
       // 裝飾標籤 (Badges: HEAD, branch, tag, remote)
       if (commit.refs && commit.refs.length > 0) {
-        commit.refs.forEach(ref => {
+        // 整理 Refs：若本地分支與遠端分支重疊於同一 Commit，自動合併為單一標籤
+        const processedRefs = [];
+        const usedRemoteIndices = new Set();
+
+        // 1. 處理本地分支 (head 或 branch)
+        for (let i = 0; i < commit.refs.length; i++) {
+          const ref = commit.refs[i];
+          if ((ref.type === 'head' || ref.type === 'branch') && ref.name !== 'HEAD') {
+            const branchName = ref.name;
+            const matchedRemotes = [];
+
+            for (let j = 0; j < commit.refs.length; j++) {
+              if (usedRemoteIndices.has(j)) continue;
+              const r = commit.refs[j];
+              if (r.type === 'remote') {
+                const rBranch = r.name.includes('/') ? r.name.split('/').slice(1).join('/') : r.name;
+                if (rBranch === branchName) {
+                  usedRemoteIndices.add(j);
+                  matchedRemotes.push(r.name);
+                }
+              }
+            }
+
+            if (matchedRemotes.length > 0) {
+              processedRefs.push({
+                type: ref.type === 'head' ? 'head-synced' : 'branch-synced',
+                name: branchName,
+                isHead: ref.isHead,
+                matchedRemotes,
+                isSynced: true
+              });
+            } else {
+              processedRefs.push(ref);
+            }
+          } else if (ref.type === 'head' && ref.name === 'HEAD') {
+            processedRefs.push(ref);
+          }
+        }
+
+        // 2. 依原序加入非本地分支 (tag、未配對的 remote 等)
+        for (let i = 0; i < commit.refs.length; i++) {
+          if (usedRemoteIndices.has(i)) continue;
+          const ref = commit.refs[i];
+          if (ref.type !== 'head' && ref.type !== 'branch') {
+            processedRefs.push(ref);
+          }
+        }
+
+        processedRefs.forEach(ref => {
           const badge = document.createElement('span');
           badge.className = `commit-badge badge-${ref.type}`;
-          
-          let icon = '⎇ ';
-          let displayName = ref.name;
-          if (ref.type === 'tag') {
-            icon = '🏷️ ';
-          } else if (ref.type === 'head') {
-            icon = '⌖ ';
-          } else if (ref.type === 'remote') {
-            icon = '☁ ';
-            // 若為 origin/xxx，精簡顯示以釋放空間，hover 顯示完整名稱
-            if (displayName.startsWith('origin/')) {
-              displayName = displayName.substring('origin/'.length);
+
+          if (ref.isSynced) {
+            badge.innerHTML = `⎇ ${escapeHtml(ref.name)} <span class="badge-icon-cloud" title="已同步至遠端: ${escapeHtml(ref.matchedRemotes.join(', '))}">☁</span>`;
+            const headDesc = ref.isHead ? '目前檢出分支 (HEAD)' : '本地分支';
+            badge.title = `${headDesc}: ${ref.name} ⬌ 遠端: ${ref.matchedRemotes.join(', ')} (已同步)`;
+          } else {
+            let icon = '⎇ ';
+            let displayName = ref.name;
+            if (ref.type === 'tag') {
+              icon = '🏷️ ';
+            } else if (ref.type === 'head') {
+              icon = ref.name === 'HEAD' ? '⌖ ' : '⎇ ';
+            } else if (ref.type === 'remote') {
+              icon = '☁ ';
+              // 若為 origin/xxx，精簡顯示以釋放空間，hover 顯示完整名稱
+              if (displayName.startsWith('origin/')) {
+                displayName = displayName.substring('origin/'.length);
+              }
             }
+
+            badge.textContent = `${icon}${displayName}`;
+            badge.title = `${ref.type === 'head' ? (ref.name === 'HEAD' ? '目前檢出 (HEAD 分離狀態)' : `目前檢出分支 (HEAD): ${ref.name}`) : (ref.type === 'remote' ? `遠端分支: ${ref.name}` : (ref.type === 'tag' ? `標籤: ${ref.name}` : `分支: ${ref.name}`))}`;
           }
 
-          badge.textContent = `${icon}${displayName}`;
-          badge.title = `${ref.type === 'head' ? '目前檢出 (HEAD): ' : (ref.type === 'remote' ? '遠端分支: ' : (ref.type === 'tag' ? '標籤: ' : '分支: '))}${ref.name}`;
           content.appendChild(badge);
         });
       }
@@ -764,8 +818,8 @@
 
       const date = document.createElement('span');
       date.className = 'commit-date';
-      date.textContent = formatRelativeTime(commit.date);
-      date.title = commit.date;
+      date.textContent = formatCommitDate(commit.date);
+      date.title = new Date(commit.date).toLocaleString('zh-TW', { hour12: false });
 
       const hashPill = document.createElement('span');
       hashPill.className = 'commit-hash';
