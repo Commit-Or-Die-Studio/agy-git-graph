@@ -11,6 +11,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+let DatabaseSyncClass = null;
+try {
+  const sqlite = await import('node:sqlite');
+  DatabaseSyncClass = sqlite.DatabaseSync;
+} catch {}
+
 // 輔助函式：路徑正規化比對 (跨平台相容)
 function isSamePath(a, b) {
   if (!a || !b) return false;
@@ -250,9 +256,12 @@ function getAgyProjects(force = false) {
         try {
           const raw = fs.readFileSync(path.join(configProjectsDir, file), 'utf8').replace(/^\uFEFF/, '');
           const data = JSON.parse(raw);
-          if (data.projectResources && Array.isArray(data.projectResources.resources)) {
-            for (const res of data.projectResources.resources) {
-              const uri = res.folderUri || res.workspaceUri || res.fileUri || res.uri;
+          if (data.projectResources) {
+            const resList = Array.isArray(data.projectResources.resources)
+              ? data.projectResources.resources
+              : [data.projectResources];
+            for (const res of resList) {
+              const uri = (res.gitFolder && res.gitFolder.folderUri) || res.folderUri || res.workspaceUri || res.fileUri || res.uri;
               if (uri) {
                 const p = parseUriToPath(uri);
                 if (p) {
@@ -281,8 +290,7 @@ function getAgyProjects(force = false) {
 
 // 依據 AGY 對話 (Session) ID 解析對應的 Git 專案路徑 (含記憶體快取)
 function resolveSessionRepo(convId) {
-  if (!convId || !/^[0-9a-f-]{8,}$/i.test(convId)) return null;
-  if (sessionConvCache.has(convId)) {
+  if (convId && sessionConvCache.has(convId)) {
     return sessionConvCache.get(convId);
   }
 
@@ -291,37 +299,79 @@ function resolveSessionRepo(convId) {
 
   const homedir = os.homedir();
   const appDataDir = process.env.ANTIGRAVITY_APP_DATA_DIR || path.join(homedir, '.gemini', 'antigravity');
-  const convDbPath = path.join(appDataDir, 'conversations', `${convId}.db`);
 
-  if (fs.existsSync(convDbPath)) {
-    try {
-      // 優先讀取 offset 327644（AGY 內部儲存所屬 Project ID 的固定標頭位置）
-      const fd = fs.openSync(convDbPath, 'r');
-      const headerBuf = Buffer.alloc(36);
-      const readBytes = fs.readSync(fd, headerBuf, 0, 36, 327644);
-      if (readBytes === 36) {
-        const candidateId = headerBuf.toString('latin1');
-        const exactHit = projects.find(p => p.id === candidateId);
-        if (exactHit) {
-          fs.closeSync(fd);
-          sessionConvCache.set(convId, exactHit);
-          return exactHit;
+  // 1. 若有指定 convId，優先比對該對話的 convDbPath
+  if (convId && /^[0-9a-f-]{8,}$/i.test(convId)) {
+    const convDbPath = path.join(appDataDir, 'conversations', `${convId}.db`);
+    if (fs.existsSync(convDbPath)) {
+      try {
+        const fd = fs.openSync(convDbPath, 'r');
+        const headerBuf = Buffer.alloc(36);
+        const readBytes = fs.readSync(fd, headerBuf, 0, 36, 327644);
+        if (readBytes === 36) {
+          const candidateId = headerBuf.toString('latin1');
+          const exactHit = projects.find(p => p.id === candidateId);
+          if (exactHit) {
+            fs.closeSync(fd);
+            sessionConvCache.set(convId, exactHit);
+            return exactHit;
+          }
         }
-      }
 
-      // 次選方案：掃描前 512KB 比對已知 Project ID
-      const scanBuf = Buffer.alloc(512 * 1024);
-      const scanBytes = fs.readSync(fd, scanBuf, 0, scanBuf.length, 0);
-      fs.closeSync(fd);
-      const scanStr = scanBuf.toString('latin1', 0, scanBytes);
-      for (const p of projects) {
-        if (p.id && scanStr.includes(p.id)) {
-          sessionConvCache.set(convId, p);
-          return p;
+        const scanBuf = Buffer.alloc(512 * 1024);
+        const scanBytes = fs.readSync(fd, scanBuf, 0, scanBuf.length, 0);
+        fs.closeSync(fd);
+        const scanStr = scanBuf.toString('latin1', 0, scanBytes);
+        for (const p of projects) {
+          if (p.id && scanStr.includes(p.id)) {
+            sessionConvCache.set(convId, p);
+            return p;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 2. 次選方案：從 conversation_summaries.db 查詢該對話或最近活躍對話之專案綁定
+  if (DatabaseSyncClass) {
+    try {
+      const summariesDbPath = path.join(appDataDir, 'conversation_summaries.db');
+      if (fs.existsSync(summariesDbPath)) {
+        const db = new DatabaseSyncClass(summariesDbPath, { readOnly: true });
+        let row = null;
+        if (convId) {
+          row = db.prepare('SELECT project_id, workspace_uris FROM conversation_summaries WHERE conversation_id = ?').get(convId);
+        } else {
+          row = db.prepare("SELECT conversation_id, project_id, workspace_uris FROM conversation_summaries WHERE project_id != 'outside-of-project' AND project_id IS NOT NULL ORDER BY last_modified_time DESC LIMIT 1").get();
+        }
+        db.close();
+
+        if (row) {
+          if (row.project_id) {
+            const hit = projects.find(p => p.id === row.project_id);
+            if (hit) {
+              if (convId) sessionConvCache.set(convId, hit);
+              return hit;
+            }
+          }
+          if (row.workspace_uris) {
+            try {
+              const uris = JSON.parse(row.workspace_uris);
+              if (Array.isArray(uris) && uris.length > 0) {
+                const parsed = parseUriToPath(uris[0]);
+                const hit = projects.find(p => isSamePath(p.path, parsed));
+                if (hit) {
+                  if (convId) sessionConvCache.set(convId, hit);
+                  return hit;
+                }
+              }
+            } catch {}
+          }
         }
       }
     } catch {}
   }
+
   return null;
 }
 
@@ -573,9 +623,17 @@ const server = http.createServer(async (req, res) => {
       };
     }
 
-    // 若仍無 currentProject 且有專案清單，以第一個專案作為預設工作區
+    // 若仍無 currentProject，優先以最近活躍的對話專案作為預設工作區
+    if (!currentProject) {
+      const activeProj = resolveSessionRepo('');
+      if (activeProj && activeProj.isGit) {
+        currentProject = activeProj;
+      }
+    }
+
+    // 若仍無 currentProject 且有專案清單，優先挑選具有 Git 的專案
     if (!currentProject && uniqueProjects.length > 0) {
-      currentProject = uniqueProjects[0];
+      currentProject = uniqueProjects.find(p => p.isGit) || uniqueProjects[0];
     }
 
     // 其餘 Session 專案 (排除 currentProject，防止重複)
@@ -595,7 +653,7 @@ const server = http.createServer(async (req, res) => {
 
   // API: 依 Session ID 自動解析對應的 Git 專案
   if (pathname === '/api/resolve-session' && req.method === 'GET') {
-    const convId = reqUrl.searchParams.get('conv');
+    const convId = reqUrl.searchParams.get('conv') || '';
     const project = resolveSessionRepo(convId);
     if (project) {
       return sendJson(res, {

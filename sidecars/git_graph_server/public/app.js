@@ -455,6 +455,10 @@
       const res = await fetch(apiUrl('/api/projects')).then(r => r.json());
       if (res.ok) {
         cachedProjectsData = res;
+        if (!currentRepo && res.currentRepo) {
+          currentRepo = res.currentRepo;
+          localStorage.setItem('agy_git_graph_repo', currentRepo);
+        }
         updateProjectButtonText();
         renderProjectMenu();
       }
@@ -472,6 +476,12 @@
       ]);
 
       if (!statusRes.ok || !statusRes.isGit) {
+        // 如果當前 repo 不是 Git，但專案清單中有可用的 Git 專案，自動切換至該專案
+        if (cachedProjectsData && cachedProjectsData.currentProject && cachedProjectsData.currentProject.isGit && !isSamePath(cachedProjectsData.currentProject.path, currentRepo)) {
+          await switchRepo(cachedProjectsData.currentProject.path);
+          return true;
+        }
+
         // 若當前尚未解析出任何 repo 路徑，維持載入/偵測狀態，避免閃爍出現「無 Git 倉庫」
         if (!currentRepo) {
           branchBadgeEl.textContent = '...';
@@ -1271,17 +1281,19 @@
     return (
       (window.sidecar && window.sidecar.conversationId) ||
       new URLSearchParams(window.location.search).get('conversationId') ||
+      new URLSearchParams(window.location.search).get('conv') ||
       ''
     );
   }
 
   async function syncActiveSessionRepo() {
     const convId = getCurrentConvId();
-    if (!convId || convId === activeConvId) return;
+    if (convId && convId === activeConvId) return;
 
-    activeConvId = convId;
+    activeConvId = convId || 'detected';
     try {
-      const res = await fetch(`/api/resolve-session?conv=${encodeURIComponent(convId)}`).then(r => r.json());
+      const q = convId ? `?conv=${encodeURIComponent(convId)}` : '';
+      const res = await fetch(`/api/resolve-session${q}`).then(r => r.json());
       if (res.ok && res.found && res.repoPath && res.isGit) {
         const normalizedTarget = res.repoPath.toLowerCase().replace(/\\/g, '/');
         const normalizedCurrent = currentRepo ? currentRepo.toLowerCase().replace(/\\/g, '/') : '';
