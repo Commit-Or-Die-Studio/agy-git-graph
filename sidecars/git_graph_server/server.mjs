@@ -390,7 +390,7 @@ const server = http.createServer(async (req, res) => {
 
     // 尋找當前工作區對應之專案 (優先比對主目錄與子模組目錄)
     let currentProject = null;
-    let currentTarget = currentRepoPath;
+    let currentTarget = queryRepo || currentRepoPath;
 
     if (currentTarget) {
       for (const p of uniqueProjects) {
@@ -423,6 +423,11 @@ const server = http.createServer(async (req, res) => {
       };
     }
 
+    // 若仍無 currentProject 且有專案清單，以第一個專案作為預設工作區
+    if (!currentProject && uniqueProjects.length > 0) {
+      currentProject = uniqueProjects[0];
+    }
+
     // 其餘 Session 專案 (排除 currentProject，防止重複)
     const sessionProjects = uniqueProjects.filter(p => {
       if (!currentProject) return true;
@@ -431,7 +436,7 @@ const server = http.createServer(async (req, res) => {
 
     return sendJson(res, {
       ok: true,
-      currentRepo: currentRepoPath,
+      currentRepo: currentTarget || (currentProject ? currentProject.path : ''),
       currentProject,
       sessionProjects,
       projects: currentProject ? [currentProject, ...sessionProjects] : sessionProjects

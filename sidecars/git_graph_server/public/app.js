@@ -120,10 +120,15 @@
   }
 
   // 切換專案下拉選單展開/收合
-  function toggleProjectMenu() {
+  async function toggleProjectMenu() {
     if (!projectMenuPopup) return;
     const isHidden = projectMenuPopup.classList.contains('hidden');
     if (isHidden) {
+      if (!cachedProjectsData || projectMenuPopup.children.length === 0) {
+        await loadProjects();
+      } else {
+        renderProjectMenu();
+      }
       projectMenuPopup.classList.remove('hidden');
       if (projectDropdownBtn) projectDropdownBtn.classList.add('active');
     } else {
@@ -335,7 +340,7 @@
   // 載入 AGY 專案清單資料
   async function loadProjects() {
     try {
-      const res = await fetch('/api/projects').then(r => r.json());
+      const res = await fetch(apiUrl('/api/projects')).then(r => r.json());
       if (res.ok) {
         cachedProjectsData = res;
         updateProjectButtonText();
@@ -372,8 +377,12 @@
       emptyState.classList.add('hidden');
 
       // 更新頂部專案選單狀態
-      updateProjectButtonText();
-      renderProjectMenu();
+      if (!cachedProjectsData || !cachedProjectsData.currentProject || !isSamePath(cachedProjectsData.currentProject.path, currentRepo)) {
+        await loadProjects();
+      } else {
+        updateProjectButtonText();
+        renderProjectMenu();
+      }
       branchBadgeEl.textContent = statusRes.currentBranch;
 
       // Working Tree 狀態提示 (支援點擊查看變更)
