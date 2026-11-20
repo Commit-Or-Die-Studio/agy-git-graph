@@ -64,38 +64,158 @@ body, html {
   white-space: nowrap;
 }
 
-.project-dropdown {
+/* 自訂專案與 Submodule 階層選單 */
+.project-dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+  max-width: 220px;
+}
+
+.project-dropdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--bg-color);
   color: var(--fg-color);
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  padding: 3px 6px;
+  padding: 3px 8px;
   font-size: 12px;
   font-weight: 600;
-  max-width: 240px;
   cursor: pointer;
   outline: none;
-  font-family: inherit;
+  max-width: 100%;
+  user-select: none;
+  transition: all 0.15s;
 }
 
-.project-dropdown:hover, .project-dropdown:focus {
+.project-dropdown-btn:hover,
+.project-dropdown-btn.active {
   border-color: var(--accent-color);
+  background-color: var(--surface-hover);
 }
 
-.project-dropdown optgroup {
+.project-btn-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.dropdown-arrow {
+  font-size: 9px;
+  color: var(--fg-muted);
+  transition: transform 0.15s;
+}
+
+.project-dropdown-btn.active .dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+/* 主彈出選單 */
+.project-menu-popup {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 220px;
+  max-width: 280px;
   background-color: var(--surface-color);
-  color: var(--accent-color);
-  font-weight: 700;
-  font-size: 11px;
-  padding: 4px 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+  padding: 4px 0;
+  user-select: none;
 }
 
-.project-dropdown option {
-  background-color: var(--bg-color);
-  color: var(--fg-color);
-  font-weight: normal;
+.menu-section-header {
+  padding: 5px 12px 3px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-color);
+  letter-spacing: 0.5px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
   font-size: 12px;
-  padding: 3px 6px;
+  color: var(--fg-color);
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s;
+  white-space: nowrap;
+  position: relative;
+}
+
+.menu-item:hover,
+.menu-item.highlighted {
+  background-color: var(--surface-hover);
+  color: #fff;
+}
+
+.menu-item.selected {
+  color: var(--accent-color);
+  font-weight: 600;
+  background-color: rgba(137, 180, 250, 0.12);
+}
+
+.menu-item-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-item-sub {
+  padding-left: 24px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.menu-item-sub:hover {
+  color: var(--fg-color);
+}
+
+.menu-divider {
+  height: 1px;
+  background-color: var(--border-color);
+  margin: 4px 0;
+}
+
+.menu-arrow {
+  font-size: 9px;
+  color: var(--fg-muted);
+  margin-left: 8px;
+}
+
+/* 向右展開的二級子選單 (Flyout Submenu) */
+.menu-parent {
+  position: relative;
+}
+
+.submenu-popup {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  min-width: 220px;
+  max-width: 280px;
+  max-height: 380px;
+  overflow-y: auto;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  z-index: 1010;
+  padding: 4px 0;
+}
+
+.menu-parent:hover > .submenu-popup,
+.menu-parent.open > .submenu-popup {
+  display: block;
 }
 
 .repo-icon {

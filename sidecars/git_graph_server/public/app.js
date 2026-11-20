@@ -26,7 +26,10 @@
 
   // DOM 元素快取
   const $ = (id) => document.getElementById(id);
-  const projectSelect = $('project-select');
+  const projectDropdownBtn = $('project-dropdown-btn');
+  const projectBtnIcon = $('project-btn-icon');
+  const projectBtnName = $('project-btn-name');
+  const projectMenuPopup = $('project-menu-popup');
   const branchBadgeEl = $('current-branch-badge');
   const statusBar = $('status-bar');
   const workingTreeStatusEl = $('working-tree-status');
@@ -99,101 +102,247 @@
     return url.toString();
   }
 
-  // 載入 AGY 專案與 Submodules 清單並填入分組下拉選單
+  // HTML 字串轉義輔助函式
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // 關閉專案下拉選單
+  function closeProjectMenu() {
+    if (projectMenuPopup) projectMenuPopup.classList.add('hidden');
+    if (projectDropdownBtn) projectDropdownBtn.classList.remove('active');
+    document.querySelectorAll('.menu-parent.open').forEach(el => el.classList.remove('open'));
+  }
+
+  // 切換專案下拉選單展開/收合
+  function toggleProjectMenu() {
+    if (!projectMenuPopup) return;
+    const isHidden = projectMenuPopup.classList.contains('hidden');
+    if (isHidden) {
+      projectMenuPopup.classList.remove('hidden');
+      if (projectDropdownBtn) projectDropdownBtn.classList.add('active');
+    } else {
+      closeProjectMenu();
+    }
+  }
+
+  // 切換當前 Repo
+  async function switchRepo(path) {
+    closeProjectMenu();
+    currentRepo = path;
+    lastStateHash = null;
+    localStorage.setItem('agy_git_graph_repo', currentRepo);
+    repoPathInput.value = currentRepo;
+    repoSwitchBar.classList.add('hidden');
+    await loadRepoMeta();
+    await loadCommits();
+    updateProjectButtonText();
+    renderProjectMenu();
+  }
+
+  let cachedProjectsData = null;
+
+  // 更新頂部專案按鈕圖示與名稱
+  function updateProjectButtonText() {
+    if (!projectBtnName) return;
+    if (!cachedProjectsData || !currentRepo) {
+      projectBtnName.textContent = currentRepo ? currentRepo.split(/[\/\\]/).pop() : '選擇專案';
+      if (projectBtnIcon) projectBtnIcon.textContent = '📁';
+      return;
+    }
+
+    const { currentProject, sessionProjects } = cachedProjectsData;
+    let foundName = '';
+    let foundIcon = '📁';
+
+    if (currentProject) {
+      if (isSamePath(currentProject.path, currentRepo)) {
+        foundName = currentProject.name;
+        foundIcon = '📁';
+      } else if (currentProject.submodules) {
+        for (const sub of currentProject.submodules) {
+          if (isSamePath(sub.path, currentRepo)) {
+            foundName = sub.name;
+            foundIcon = '📦';
+            break;
+          }
+        }
+      }
+    }
+
+    if (!foundName && Array.isArray(sessionProjects)) {
+      for (const p of sessionProjects) {
+        if (isSamePath(p.path, currentRepo)) {
+          foundName = p.name;
+          foundIcon = '📁';
+          break;
+        }
+        if (p.submodules) {
+          for (const sub of p.submodules) {
+            if (isSamePath(sub.path, currentRepo)) {
+              foundName = sub.name;
+              foundIcon = '📦';
+              break;
+            }
+          }
+        }
+        if (foundName) break;
+      }
+    }
+
+    if (!foundName) {
+      foundName = currentRepo.split(/[\/\\]/).pop() || '自訂專案';
+      foundIcon = '📂';
+    }
+
+    if (projectBtnIcon) projectBtnIcon.textContent = foundIcon;
+    projectBtnName.textContent = foundName;
+    projectBtnName.title = currentRepo;
+  }
+
+  // 渲染專案選單 DOM (含向右展開之對話工作區二級子選單)
+  function renderProjectMenu() {
+    if (!projectMenuPopup || !cachedProjectsData) return;
+    projectMenuPopup.innerHTML = '';
+
+    const currentProj = cachedProjectsData.currentProject;
+    const sessionProjs = Array.isArray(cachedProjectsData.sessionProjects) ? cachedProjectsData.sessionProjects : [];
+
+    // 1. 第一分組：當前工作區 (本資料夾 Repo + Submodules)
+    if (currentProj) {
+      const header = document.createElement('div');
+      header.className = 'menu-section-header';
+      header.textContent = '📍 當前工作區 (本資料夾)';
+      projectMenuPopup.appendChild(header);
+
+      // 主 Repo
+      const mainItem = document.createElement('div');
+      mainItem.className = `menu-item ${isSamePath(currentRepo, currentProj.path) ? 'selected' : ''}`;
+      mainItem.innerHTML = `<span class="menu-item-text"><span>📁</span><span>${escapeHtml(currentProj.name)}${currentProj.isGit ? '' : ' (非Git)'}</span></span>`;
+      mainItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        switchRepo(currentProj.path);
+      });
+      projectMenuPopup.appendChild(mainItem);
+
+      // Submodules
+      if (Array.isArray(currentProj.submodules) && currentProj.submodules.length > 0) {
+        currentProj.submodules.forEach(sub => {
+          const subItem = document.createElement('div');
+          subItem.className = `menu-item menu-item-sub ${isSamePath(currentRepo, sub.path) ? 'selected' : ''}`;
+          subItem.innerHTML = `<span class="menu-item-text"><span>📦</span><span>${escapeHtml(sub.name)}${sub.isGit ? '' : ' (未初始化)'}</span></span>`;
+          subItem.addEventListener('click', (e) => {
+            e.stopPropagation();
+            switchRepo(sub.path);
+          });
+          projectMenuPopup.appendChild(subItem);
+        });
+      }
+    }
+
+    // 分隔線
+    const div1 = document.createElement('div');
+    div1.className = 'menu-divider';
+    projectMenuPopup.appendChild(div1);
+
+    // 2. 第二分組：對話工作區 (Session Repos) -> 向右展開子選單
+    const sessionParent = document.createElement('div');
+    sessionParent.className = 'menu-item menu-parent';
+    sessionParent.innerHTML = `
+      <span class="menu-item-text"><span>💬</span><span>對話工作區 (Session Repos)</span></span>
+      <span class="menu-arrow">▶</span>
+    `;
+
+    const submenu = document.createElement('div');
+    submenu.className = 'submenu-popup';
+
+    if (sessionProjs.length > 0) {
+      sessionProjs.forEach(p => {
+        const pItem = document.createElement('div');
+        pItem.className = `menu-item ${isSamePath(currentRepo, p.path) ? 'selected' : ''}`;
+        pItem.innerHTML = `<span class="menu-item-text"><span>📁</span><span>${escapeHtml(p.name)}${p.isGit ? '' : ' (非Git)'}</span></span>`;
+        pItem.addEventListener('click', (e) => {
+          e.stopPropagation();
+          switchRepo(p.path);
+        });
+        submenu.appendChild(pItem);
+
+        if (Array.isArray(p.submodules) && p.submodules.length > 0) {
+          p.submodules.forEach(sub => {
+            const subItem = document.createElement('div');
+            subItem.className = `menu-item menu-item-sub ${isSamePath(currentRepo, sub.path) ? 'selected' : ''}`;
+            subItem.innerHTML = `<span class="menu-item-text"><span>📦</span><span>${escapeHtml(sub.name)}${sub.isGit ? '' : ' (未初始化)'}</span></span>`;
+            subItem.addEventListener('click', (e) => {
+              e.stopPropagation();
+              switchRepo(sub.path);
+            });
+            submenu.appendChild(subItem);
+          });
+        }
+      });
+    } else {
+      const emptyItem = document.createElement('div');
+      emptyItem.className = 'menu-item';
+      emptyItem.style.color = '#6c7086';
+      emptyItem.style.cursor = 'default';
+      emptyItem.textContent = '(無其他對話專案)';
+      submenu.appendChild(emptyItem);
+    }
+
+    // 當游標移入時檢查螢幕右側邊界，若寬度不足則自動向左展開
+    sessionParent.addEventListener('mouseenter', () => {
+      const rect = sessionParent.getBoundingClientRect();
+      if (rect.right + 230 > window.innerWidth) {
+        submenu.style.left = 'auto';
+        submenu.style.right = '100%';
+      } else {
+        submenu.style.left = '100%';
+        submenu.style.right = 'auto';
+      }
+    });
+
+    sessionParent.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sessionParent.classList.toggle('open');
+    });
+
+    sessionParent.appendChild(submenu);
+    projectMenuPopup.appendChild(sessionParent);
+
+    // 分隔線
+    const div2 = document.createElement('div');
+    div2.className = 'menu-divider';
+    projectMenuPopup.appendChild(div2);
+
+    // 3. 第三分組：自訂本機路徑
+    const customItem = document.createElement('div');
+    customItem.className = 'menu-item';
+    customItem.innerHTML = '<span class="menu-item-text"><span>➕</span><span>自訂本機路徑...</span></span>';
+    customItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeProjectMenu();
+      repoSwitchBar.classList.remove('hidden');
+      repoPathInput.focus();
+    });
+    projectMenuPopup.appendChild(customItem);
+  }
+
+  // 載入 AGY 專案清單資料
   async function loadProjects() {
     try {
       const res = await fetch('/api/projects').then(r => r.json());
       if (res.ok) {
-        projectSelect.innerHTML = '';
-        let hasSelected = false;
-
-        const currentProj = res.currentProject;
-        const sessionProjs = Array.isArray(res.sessionProjects) ? res.sessionProjects : [];
-
-        // 1. 第一分組：當前工作區 (本資料夾 Repo + Submodules)
-        if (currentProj) {
-          const currentGroup = document.createElement('optgroup');
-          currentGroup.label = '📍 當前工作區 (本資料夾)';
-
-          // 主 Repo Option
-          const opt = document.createElement('option');
-          opt.value = currentProj.path;
-          opt.textContent = `📁 ${currentProj.name}${currentProj.isGit ? '' : ' (非Git)'}`;
-          if (isSamePath(currentRepo, currentProj.path)) {
-            opt.selected = true;
-            hasSelected = true;
-          }
-          currentGroup.appendChild(opt);
-
-          // Submodules Options
-          if (Array.isArray(currentProj.submodules) && currentProj.submodules.length > 0) {
-            currentProj.submodules.forEach(sub => {
-              const subOpt = document.createElement('option');
-              subOpt.value = sub.path;
-              subOpt.textContent = `  ↳ 📦 ${sub.name}${sub.isGit ? '' : ' (未初始化)'}`;
-              if (isSamePath(currentRepo, sub.path)) {
-                subOpt.selected = true;
-                hasSelected = true;
-              }
-              currentGroup.appendChild(subOpt);
-            });
-          }
-
-          projectSelect.appendChild(currentGroup);
-        }
-
-        // 2. 第二分組：對話工作區 (Session Repos)
-        if (sessionProjs.length > 0) {
-          const sessionGroup = document.createElement('optgroup');
-          sessionGroup.label = '💬 對話工作區 (Session Repos)';
-
-          sessionProjs.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.path;
-            opt.textContent = `📁 ${p.name}${p.isGit ? '' : ' (非Git)'}`;
-            if (isSamePath(currentRepo, p.path)) {
-              opt.selected = true;
-              hasSelected = true;
-            }
-            sessionGroup.appendChild(opt);
-
-            if (Array.isArray(p.submodules) && p.submodules.length > 0) {
-              p.submodules.forEach(sub => {
-                const subOpt = document.createElement('option');
-                subOpt.value = sub.path;
-                subOpt.textContent = `  ↳ 📦 ${sub.name}${sub.isGit ? '' : ' (未初始化)'}`;
-                if (isSamePath(currentRepo, sub.path)) {
-                  subOpt.selected = true;
-                  hasSelected = true;
-                }
-                sessionGroup.appendChild(subOpt);
-              });
-            }
-          });
-
-          projectSelect.appendChild(sessionGroup);
-        }
-
-        // 3. 預設/未選中提示
-        if (!hasSelected && !currentProj) {
-          const noneOpt = document.createElement('option');
-          noneOpt.value = '';
-          noneOpt.textContent = '📂 (無關聯專案)';
-          noneOpt.selected = true;
-          projectSelect.insertBefore(noneOpt, projectSelect.firstChild);
-        }
-
-        // 4. 自訂本機路徑
-        const actionGroup = document.createElement('optgroup');
-        actionGroup.label = '⚙️ 其他操作';
-        const customOpt = document.createElement('option');
-        customOpt.value = '__custom__';
-        customOpt.textContent = '➕ 自訂本機路徑...';
-        actionGroup.appendChild(customOpt);
-        projectSelect.appendChild(actionGroup);
+        cachedProjectsData = res;
+        updateProjectButtonText();
+        renderProjectMenu();
       }
     } catch (err) {
-      console.warn('載入專案清單失敗:', err);
+      console.warn('載入專案選單失敗:', err);
     }
   }
 
@@ -222,20 +371,9 @@
       repoSwitchBar.classList.add('hidden');
       emptyState.classList.add('hidden');
 
-      // 嘗試選中對應的專案或 Submodule (優先精確比對，避免父專案前綴覆蓋)
-      if (projectSelect) {
-        let matchedIdx = -1;
-        for (let i = 0; i < projectSelect.options.length; i++) {
-          const optVal = projectSelect.options[i].value;
-          if (isSamePath(optVal, currentRepo)) {
-            matchedIdx = i;
-            break;
-          }
-        }
-        if (matchedIdx !== -1) {
-          projectSelect.selectedIndex = matchedIdx;
-        }
-      }
+      // 更新頂部專案選單狀態
+      updateProjectButtonText();
+      renderProjectMenu();
       branchBadgeEl.textContent = statusRes.currentBranch;
 
       // Working Tree 狀態提示 (支援點擊查看變更)
@@ -802,23 +940,20 @@
     repoSwitchBar.classList.toggle('hidden');
   });
 
-  if (projectSelect) {
-    projectSelect.addEventListener('change', async (e) => {
-      const val = e.target.value;
-      if (val === '__custom__') {
-        repoSwitchBar.classList.remove('hidden');
-        repoPathInput.focus();
-        return;
-      }
-      currentRepo = val;
-      lastStateHash = null;
-      localStorage.setItem('agy_git_graph_repo', currentRepo);
-      repoPathInput.value = currentRepo;
-      repoSwitchBar.classList.add('hidden');
-      await loadRepoMeta();
-      await loadCommits();
+  if (projectDropdownBtn) {
+    projectDropdownBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleProjectMenu();
     });
   }
+
+  // 點擊選單外部自動關閉下拉選單
+  document.addEventListener('click', (e) => {
+    if (projectDropdownBtn && !projectDropdownBtn.contains(e.target) &&
+        projectMenuPopup && !projectMenuPopup.contains(e.target)) {
+      closeProjectMenu();
+    }
+  });
 
   btnSetRepo.addEventListener('click', async () => {
     const newPath = repoPathInput.value.trim();

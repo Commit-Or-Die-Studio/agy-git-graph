@@ -12,10 +12,14 @@
     <header class="toolbar">
       <div class="toolbar-row top-row">
         <div class="repo-info">
-          <span class="repo-icon">📂</span>
-          <select id="project-select" class="project-dropdown" title="切換 AGY 專案">
-            <option value="">載入專案中...</option>
-          </select>
+          <div class="project-dropdown-wrapper" id="project-dropdown-wrapper">
+            <button type="button" id="project-dropdown-btn" class="project-dropdown-btn" title="切換 AGY 專案與 Submodules">
+              <span id="project-btn-icon">📁</span>
+              <span id="project-btn-name" class="project-btn-name">載入專案中...</span>
+              <span class="dropdown-arrow">▾</span>
+            </button>
+            <div id="project-menu-popup" class="project-menu-popup hidden"></div>
+          </div>
           <span class="branch-pill" id="current-branch-badge">HEAD</span>
         </div>
         <div class="toolbar-actions">
