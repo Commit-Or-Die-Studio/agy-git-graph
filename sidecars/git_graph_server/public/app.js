@@ -215,8 +215,18 @@
     if (!projectMenuPopup || !cachedProjectsData) return;
     projectMenuPopup.innerHTML = '';
 
-    const currentProj = cachedProjectsData.currentProject;
+    let currentProj = cachedProjectsData.currentProject;
     const sessionProjs = Array.isArray(cachedProjectsData.sessionProjects) ? cachedProjectsData.sessionProjects : [];
+
+    // 若後端未提供 currentProject 但前端已知 currentRepo，動態建立以保障選單渲染
+    if (!currentProj && currentRepo) {
+      currentProj = {
+        name: currentRepo.split(/[\/\\]/).pop() || '當前專案',
+        path: currentRepo,
+        isGit: true,
+        submodules: []
+      };
+    }
 
     // 1. 第一分組：當前工作區 (本資料夾 Repo + Submodules)
     if (currentProj) {

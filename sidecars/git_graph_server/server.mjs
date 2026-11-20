@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -20,6 +20,34 @@ function isSamePath(a, b) {
   return normA.toLowerCase() === normB.toLowerCase();
 }
 
+// 輔助函式：將各種 URI (包含 file://, vscode-remote://, ssh-remote://) 解析為本機或 Linux 實體路徑
+function parseUriToPath(uri) {
+  if (!uri) return '';
+  try {
+    if (uri.startsWith('file://')) {
+      let p = uri.replace(/^file:\/\//, '');
+      p = decodeURIComponent(p);
+      if (/^\/[a-zA-Z]:/.test(p)) {
+        p = p.slice(1);
+      }
+      return path.normalize(p);
+    }
+    if (uri.includes('://')) {
+      const parsed = new URL(uri);
+      let p = decodeURIComponent(parsed.pathname);
+      if (/^\/[a-zA-Z]:/.test(p)) {
+        p = p.slice(1);
+      }
+      return path.normalize(p);
+    }
+  } catch {}
+  let p = decodeURIComponent(uri.replace(/^file:\/\//, ''));
+  if (/^\/[a-zA-Z]:/.test(p)) {
+    p = p.slice(1);
+  }
+  return path.normalize(p);
+}
+
 // 解析 .gitmodules 內容取得子模組資訊
 function parseGitModules(content) {
   const submodules = [];
@@ -28,7 +56,7 @@ function parseGitModules(content) {
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
-    const sectionMatch = trimmed.match(/^\[submodule\s+"?([^"\]]+)"?\]$/i);
+    const sectionMatch = trimmed.match(/^\[submodule\s+"?([^"\]]+)"?\]/i);
     if (sectionMatch) {
       if (current && current.relPath) submodules.push(current);
       current = { name: sectionMatch[1].trim(), relPath: '' };
@@ -45,80 +73,184 @@ function parseGitModules(content) {
   return submodules;
 }
 
-// 取得指定 Git 倉庫的所有 Submodules (支援遞迴子模組)
+// 多管道深度偵測 Git Submodules 與巢狀 Git 倉庫
 function getSubmodules(repoPath, depth = 0) {
   if (depth > 2) return [];
   const submodules = [];
   if (!repoPath || !fs.existsSync(repoPath)) return submodules;
 
-  const gitmodulesPath = path.join(repoPath, '.gitmodules');
-  if (!fs.existsSync(gitmodulesPath)) return submodules;
+  const foundRelPaths = new Set();
 
+  // 管道 1：透過 Git 指令 git submodule status 取得正式註冊之子模組
   try {
-    const content = fs.readFileSync(gitmodulesPath, 'utf8');
-    const parsed = parseGitModules(content);
-    for (const item of parsed) {
-      const fullSubPath = path.normalize(path.join(repoPath, item.relPath));
-      const gitPath = path.join(fullSubPath, '.git');
-      const isGit = fs.existsSync(gitPath);
-      const subObj = {
-        name: item.name || item.relPath,
-        relPath: item.relPath.replace(/\\/g, '/'),
-        path: fullSubPath,
-        isGit
-      };
-      submodules.push(subObj);
-
-      // 若該子模組也是已初始化的 Git 倉庫，支援遞迴偵測巢狀子模組
-      if (isGit) {
-        const nested = getSubmodules(fullSubPath, depth + 1);
-        for (const n of nested) {
-          submodules.push({
-            name: `${subObj.name} / ${n.name}`,
-            relPath: `${subObj.relPath}/${n.relPath}`,
-            path: n.path,
-            isGit: n.isGit
-          });
+    const gitSubStatus = execFileSync('git', ['submodule', 'status'], {
+      cwd: repoPath,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: 3000
+    });
+    if (gitSubStatus) {
+      const lines = gitSubStatus.split(/\r?\n/);
+      for (const line of lines) {
+        const m = line.match(/^[\s\+\-U]?([0-9a-f]{40})\s+([^\s]+)/i);
+        if (m) {
+          const relPath = m[2].trim().replace(/\\/g, '/');
+          if (relPath && !foundRelPaths.has(relPath)) {
+            foundRelPaths.add(relPath);
+            const fullPath = path.normalize(path.join(repoPath, relPath));
+            const isGit = fs.existsSync(path.join(fullPath, '.git'));
+            submodules.push({
+              name: path.basename(relPath),
+              relPath,
+              path: fullPath,
+              isGit
+            });
+          }
         }
       }
     }
-  } catch (err) {
-    console.warn(`[Git Graph Sidecar] 解析 submodules 失敗 (${repoPath}):`, err.message);
+  } catch {}
+
+  // 管道 2：解析 .gitmodules 檔案 (支援未初始化或特殊註冊)
+  const gitmodulesPath = path.join(repoPath, '.gitmodules');
+  if (fs.existsSync(gitmodulesPath)) {
+    try {
+      const content = fs.readFileSync(gitmodulesPath, 'utf8');
+      const parsed = parseGitModules(content);
+      for (const item of parsed) {
+        const relPath = item.relPath.replace(/\\/g, '/');
+        if (relPath && !foundRelPaths.has(relPath)) {
+          foundRelPaths.add(relPath);
+          const fullPath = path.normalize(path.join(repoPath, relPath));
+          const isGit = fs.existsSync(path.join(fullPath, '.git'));
+          submodules.push({
+            name: item.name || path.basename(relPath),
+            relPath,
+            path: fullPath,
+            isGit
+          });
+        }
+      }
+    } catch {}
   }
+
+  // 管道 3：透過 git ls-files 檢查 Git 索引中的 160000 gitlink 記錄
+  try {
+    const lsFilesOut = execFileSync('git', ['ls-files', '--stage'], {
+      cwd: repoPath,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: 3000
+    });
+    if (lsFilesOut) {
+      const lines = lsFilesOut.split(/\r?\n/);
+      for (const line of lines) {
+        if (line.startsWith('160000 ')) {
+          const parts = line.split('\t');
+          if (parts.length > 1) {
+            const relPath = parts[1].trim().replace(/\\/g, '/');
+            if (relPath && !foundRelPaths.has(relPath)) {
+              foundRelPaths.add(relPath);
+              const fullPath = path.normalize(path.join(repoPath, relPath));
+              const isGit = fs.existsSync(path.join(fullPath, '.git'));
+              submodules.push({
+                name: path.basename(relPath),
+                relPath,
+                path: fullPath,
+                isGit
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // 管道 4：自動掃描 1~2 層子目錄中內含 .git 的巢狀倉庫 (特別針對 Odoo 與多 Repo 工作區)
+  try {
+    const entries = fs.readdirSync(repoPath, { withFileTypes: true });
+    const ignoreNames = new Set(['.git', 'node_modules', '.gemini', '.vscode', '.idea', 'venv', '.venv', '__pycache__', 'dist', 'build', '.cache']);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      if (ignoreNames.has(name) || name.startsWith('.')) continue;
+
+      const subPath = path.join(repoPath, name);
+      const gitPath = path.join(subPath, '.git');
+      const rel1 = name.replace(/\\/g, '/');
+
+      if (fs.existsSync(gitPath)) {
+        if (!foundRelPaths.has(rel1)) {
+          foundRelPaths.add(rel1);
+          submodules.push({
+            name,
+            relPath: rel1,
+            path: path.normalize(subPath),
+            isGit: true
+          });
+        }
+      } else {
+        // 檢查下一層 (例如 addons/custom/.git 或 src/odoo/.git)
+        try {
+          const subEntries = fs.readdirSync(subPath, { withFileTypes: true });
+          for (const subEntry of subEntries) {
+            if (!subEntry.isDirectory()) continue;
+            const subName = subEntry.name;
+            if (ignoreNames.has(subName) || subName.startsWith('.')) continue;
+
+            const subSubPath = path.join(subPath, subName);
+            if (fs.existsSync(path.join(subSubPath, '.git'))) {
+              const rel2 = `${name}/${subName}`.replace(/\\/g, '/');
+              if (!foundRelPaths.has(rel2)) {
+                foundRelPaths.add(rel2);
+                submodules.push({
+                  name: `${name}/${subName}`,
+                  relPath: rel2,
+                  path: path.normalize(subSubPath),
+                  isGit: true
+                });
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch {}
 
   return submodules;
 }
 
-// 初始預設倉庫路徑（自動尋找當前工作區或 AGY 已註冊的 Git 專案）
+// 初始預設倉庫路徑（自動尋找當前工作區或 AGY 已註冊的 Git 專案，支援本機與 SSH 遠端）
 function getAgyProjects() {
   const projects = [];
   const homedir = os.homedir();
-  const configProjectsDir = path.join(homedir, '.gemini', 'config', 'projects');
-  if (fs.existsSync(configProjectsDir)) {
+  const candidateDirs = [
+    path.join(homedir, '.gemini', 'config', 'projects'),
+    path.join(homedir, '.gemini', 'antigravity', 'projects'),
+    path.join(homedir, '.config', 'antigravity', 'projects'),
+    path.join(homedir, '.gemini', 'projects')
+  ];
+
+  for (const configProjectsDir of candidateDirs) {
+    if (!fs.existsSync(configProjectsDir)) continue;
     try {
       const files = fs.readdirSync(configProjectsDir);
       for (const file of files) {
-        if (file.endsWith('.json')) {
-          try {
-            const raw = fs.readFileSync(path.join(configProjectsDir, file), 'utf8').replace(/^\uFEFF/, '');
-            const data = JSON.parse(raw);
-            if (data.projectResources && Array.isArray(data.projectResources.resources)) {
-              for (const res of data.projectResources.resources) {
-                if (res.folderUri) {
-                  let p = res.folderUri.replace(/^file:\/\//, '');
-                  p = decodeURIComponent(p);
-                  if (/^\/[a-zA-Z]:/.test(p)) {
-                    p = p.slice(1);
-                  }
-                  if (/^[a-zA-Z]:/.test(p)) {
-                    p = p.charAt(0).toUpperCase() + p.slice(1);
-                  }
-                  p = path.normalize(p);
+        if (!file.endsWith('.json')) continue;
+        try {
+          const raw = fs.readFileSync(path.join(configProjectsDir, file), 'utf8').replace(/^\uFEFF/, '');
+          const data = JSON.parse(raw);
+          if (data.projectResources && Array.isArray(data.projectResources.resources)) {
+            for (const res of data.projectResources.resources) {
+              const uri = res.folderUri || res.workspaceUri || res.fileUri || res.uri;
+              if (uri) {
+                const p = parseUriToPath(uri);
+                if (p) {
                   const isGit = fs.existsSync(path.join(p, '.git'));
                   const submodules = isGit ? getSubmodules(p) : [];
                   projects.push({
                     id: data.id,
-                    name: data.name,
+                    name: data.name || path.basename(p),
                     path: p,
                     isGit,
                     submodules
@@ -126,11 +258,12 @@ function getAgyProjects() {
                 }
               }
             }
-          } catch {}
-        }
+          }
+        } catch {}
       }
     } catch {}
   }
+
   return projects;
 }
 
