@@ -402,7 +402,9 @@ async function runGit(args, cwd = currentRepoPath) {
       cwd,
       maxBuffer: 20 * 1024 * 1024,
       windowsHide: true,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      // 唯讀查詢不取得 .git/index.lock，避免與 AGY / 使用者的 git 操作互搶鎖、也避免改寫 index 觸發假變更
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }
     });
     return {
       ok: true,
@@ -732,15 +734,23 @@ const server = http.createServer(async (req, res) => {
       runGit(['status', '--porcelain', '--ignore-submodules=dirty'], queryRepo)
     ]);
 
+    // 任一指令暫時失敗 (例如其他程序正在操作倉庫) 時不回傳 stateHash，避免空字串造成「假變更 → 重刷 → 恢復 → 再重刷」
+    const headUnborn = !headRes.ok && /unknown revision|ambiguous argument 'HEAD'|bad revision/i.test(headRes.stderr || '');
+    if ((!headRes.ok && !headUnborn) || !branchRes.ok || !remotesRes.ok || !statusRes.ok) {
+      return sendJson(res, { ok: false, transient: true });
+    }
+
     const head = headRes.stdout || '';
     const branch = branchRes.stdout || '';
     const remotes = remotesRes.stdout || '';
     const statusText = statusRes.stdout || '';
     const statusCount = statusText ? statusText.split('\n').filter(Boolean).length : 0;
-    const stateHash = `${head}:${branch}:${remotes}:${statusText}`;
+    const graphHash = `${head}:${branch}:${remotes}`;
+    const stateHash = `${graphHash}:${statusText}`;
 
     return sendJson(res, {
       ok: true,
+      graphHash,
       stateHash,
       isClean: statusCount === 0
     });

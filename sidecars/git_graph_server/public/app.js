@@ -548,8 +548,10 @@
   }
 
   // 載入 Commit 分支圖資料
-  async function loadCommits() {
-    loadingState.classList.remove('hidden');
+  async function loadCommits({ silent = false } = {}) {
+    if (!silent) {
+      loadingState.classList.remove('hidden');
+    }
     emptyState.classList.add('hidden');
 
     try {
@@ -1184,7 +1186,8 @@
 
       if (res.ok) {
         currentRepo = res.repoPath;
-        lastStateHash = null;
+        lastGraphHash = null;
+      lastStateHash = null;
         localStorage.setItem('agy_git_graph_repo', currentRepo);
         repoSwitchBar.classList.add('hidden');
         await loadProjects();
@@ -1340,11 +1343,21 @@
     );
   }
 
+  // 自動切換對話專案：
+  // 僅在 AGY 明確提供 conversationId 且切換到不同對話時自動切換；
+  // 若拿不到 conversationId，僅在初次啟動尚未選定專案時偵測一次，避免多視窗/背景對話互相搶奪畫面。
+  let hasInitialFallbackResolve = false;
+
   async function syncActiveSessionRepo() {
     const convId = getCurrentConvId();
-    if (convId && convId === activeConvId) return;
+    if (convId) {
+      if (convId === activeConvId) return;
+      activeConvId = convId;
+    } else {
+      if (currentRepo || hasInitialFallbackResolve) return;
+      hasInitialFallbackResolve = true;
+    }
 
-    activeConvId = convId || 'detected';
     try {
       const q = convId ? `?conv=${encodeURIComponent(convId)}` : '';
       const res = await fetch(`/api/resolve-session${q}`).then(r => r.json());
@@ -1353,6 +1366,7 @@
         const normalizedCurrent = currentRepo ? currentRepo.toLowerCase().replace(/\\/g, '/') : '';
         if (normalizedTarget !== normalizedCurrent) {
           currentRepo = res.repoPath;
+          lastGraphHash = null;
           lastStateHash = null;
           localStorage.setItem('agy_git_graph_repo', currentRepo);
           updateProjectButtonText();
@@ -1372,6 +1386,7 @@
   }
 
   // 自動偵測本地 Git 狀態變更 (Watch State)
+  let lastGraphHash = null;
   let lastStateHash = null;
   let isCheckingState = false;
 
@@ -1381,16 +1396,27 @@
     try {
       const res = await fetch(apiUrl('/api/watch-state')).then(r => r.json());
       if (res.ok && typeof res.stateHash === 'string') {
+        const graphHash = typeof res.graphHash === 'string' ? res.graphHash : res.stateHash;
         if (lastStateHash === null) {
+          lastGraphHash = graphHash;
           lastStateHash = res.stateHash;
-        } else if (res.stateHash !== lastStateHash) {
+        } else if (graphHash !== lastGraphHash) {
+          // Commit 歷史 / 分支 / 遠端指標變動：靜默重繪分支圖與狀態列
+          lastGraphHash = graphHash;
           lastStateHash = res.stateHash;
           const isGit = await loadRepoMeta();
           if (isGit) {
-            await loadCommits();
+            await loadCommits({ silent: true });
             if (selectedCommitHash === 'WORKING') {
               await openWorkingTreeDetail();
             }
+          }
+        } else if (res.stateHash !== lastStateHash) {
+          // 僅工作區未提交檔案變動：只更新狀態列與抽屜，不重繪 Commit 分支圖
+          lastStateHash = res.stateHash;
+          await loadRepoMeta();
+          if (selectedCommitHash === 'WORKING') {
+            await openWorkingTreeDetail();
           }
         }
       }
