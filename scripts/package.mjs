@@ -43,14 +43,27 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function bumpPatchVersion(ver) {
+  const m = String(ver || '1.0.0').trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return `${ver}-next`;
+  return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
+}
+
 async function packagePlugin() {
   console.log('========================================================');
   console.log('  AGY Git Graph - Release 打包建置程式');
   console.log('========================================================\n');
 
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
-  const version = pkg.version || '1.0.0';
+  const baseVersion = pkg.version || '1.0.0';
+  const useNext = process.argv.includes('--next');
+  const verFlagIdx = process.argv.indexOf('--version');
+  const explicitVer = verFlagIdx !== -1 ? process.argv[verFlagIdx + 1] : '';
+  const version = explicitVer || (useNext ? bumpPatchVersion(baseVersion) : baseVersion);
   const pluginName = pkg.name || 'agy-git-graph';
+  if (version !== baseVersion) {
+    console.log(`📌 使用預覽/下一版本號打包: v${version} (工作區設定維持 v${baseVersion})\n`);
+  }
 
   // 1. 準備暫存與輸出目錄
   if (fs.existsSync(DIST_DIR)) {
@@ -68,6 +81,18 @@ async function packagePlugin() {
     const src = path.join(ROOT_DIR, file);
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, path.join(targetStaging, file));
+    }
+  }
+
+  // 若為預覽/下一版本打包，僅更新暫存區內部的 manifest 版號，不更動工作區原始檔
+  if (version !== baseVersion) {
+    for (const jsonName of ['package.json', 'plugin.json']) {
+      const stagedJsonPath = path.join(targetStaging, jsonName);
+      if (fs.existsSync(stagedJsonPath)) {
+        const data = JSON.parse(fs.readFileSync(stagedJsonPath, 'utf8'));
+        data.version = version;
+        fs.writeFileSync(stagedJsonPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+      }
     }
   }
 
