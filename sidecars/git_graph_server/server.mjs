@@ -431,17 +431,23 @@ function parseRefs(refStr) {
   const badges = [];
 
   for (const part of parts) {
+    if (!part || part === 'refs/stash') continue;
     if (part.startsWith('HEAD -> ')) {
-      const branchName = part.replace('HEAD -> ', '').trim();
+      const branchName = part.replace('HEAD -> ', '').trim().replace(/^refs\/heads\//, '');
       badges.push({ type: 'head', name: branchName, isHead: true });
     } else if (part === 'HEAD') {
       badges.push({ type: 'head', name: 'HEAD', isHead: true });
-    } else if (part.startsWith('tag: ')) {
-      badges.push({ type: 'tag', name: part.replace('tag: ', '').trim() });
-    } else if (part.startsWith('refs/tags/')) {
-      badges.push({ type: 'tag', name: part.replace('refs/tags/', '').trim() });
-    } else if (part.includes('/')) {
-      // 忽略 origin/HEAD 冗餘指標 (已有對應的遠端分支)
+    } else if (part.startsWith('tag: ') || part.startsWith('refs/tags/')) {
+      const tagName = part.replace(/^tag:\s*/, '').replace(/^refs\/tags\//, '').trim();
+      badges.push({ type: 'tag', name: tagName });
+    } else if (part.startsWith('refs/heads/')) {
+      badges.push({ type: 'branch', name: part.replace(/^refs\/heads\//, '').trim() });
+    } else if (part.startsWith('refs/remotes/')) {
+      const remoteRef = part.replace(/^refs\/remotes\//, '').trim();
+      if (!remoteRef.endsWith('/HEAD')) {
+        badges.push({ type: 'remote', name: remoteRef });
+      }
+    } else if (part.startsWith('origin/')) {
       if (!part.endsWith('/HEAD')) {
         badges.push({ type: 'remote', name: part });
       }
@@ -892,7 +898,7 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
       }
     }
 
-    const args = ['log', '--topo-order', '--no-color', '--date=iso-strict', '--pretty=format:%H|%h|%P|%an|%ae|%aI|%s|%d', `-n${limit}`];
+    const args = ['log', '--decorate=full', '--topo-order', '--no-color', '--date=iso-strict', '--pretty=format:%H|%h|%P|%an|%ae|%aI|%s|%d', `-n${limit}`];
     if (branch === 'all') {
       args.splice(1, 0, '--all');
     } else {
