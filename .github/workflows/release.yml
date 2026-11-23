@@ -26,12 +26,14 @@ jobs:
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
+          name: AGY Git Graph ${{ github.ref_name }}
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/*.exe
             dist/*.sh
             dist/*.zip
             dist/*.tar.gz
             dist/SHA256SUMS.txt
-          generate_release_notes: true
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

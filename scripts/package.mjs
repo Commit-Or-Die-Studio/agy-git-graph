@@ -281,6 +281,53 @@ fi
   const checksumContent = checksums.map(c => `${c.hash}  ${c.file}`).join('\n') + '\n';
   fs.writeFileSync(path.join(DIST_DIR, 'SHA256SUMS.txt'), checksumContent, 'utf8');
 
+  // 6. 由 README.md 擷取該版本 Changelog 並生成 dist/RELEASE_NOTES.md (供 GitHub Release 自動掛載說明)
+  let changelogSection = '';
+  const readmePath = path.join(ROOT_DIR, 'README.md');
+  if (fs.existsSync(readmePath)) {
+    const readmeText = fs.readFileSync(readmePath, 'utf8');
+    const escapedVer = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const headingRegex = new RegExp(`^###\\s+v${escapedVer}\\b[^\\r\\n]*\\r?\\n([\\s\\S]*?)(?=^###\\s+v|^##\\s+|(?![\\s\\S]))`, 'm');
+    const match = readmeText.match(headingRegex);
+    if (match && match[1]) {
+      // 取到下一個 ### 或 --- 分隔線前
+      changelogSection = match[1].split(/\r?\n---\r?\n/)[0].trim();
+    }
+  }
+  if (!changelogSection) {
+    changelogSection = `* Release v${version}`;
+  }
+
+  const releaseNotesMd = [
+    `## 🚀 AGY Git Graph v${version} 更新內容 / What's Changed`,
+    '',
+    changelogSection,
+    '',
+    '---',
+    '',
+    '## 📦 安裝檔下載與使用說明 / Installation Guide',
+    '',
+    '| 平台 / Platform | 檔案名稱 / Asset | 說明 / Description |',
+    '| :--- | :--- | :--- |',
+    `| **Windows (推薦)** | \`${pluginName}-v${version}-setup.exe\` | **Windows 一鍵安裝檔**：下載後雙擊即可自動安裝至 AGY 全域外掛目錄 |`,
+    `| **Windows** | \`${pluginName}-v${version}-uninstall.exe\` | **Windows 解除安裝檔**：雙擊自動關閉背景程序並完整移除外掛 |`,
+    `| **Linux / macOS (推薦)** | \`${pluginName}-v${version}-setup.sh\` | **自解壓安裝腳本**：執行 \`bash ${pluginName}-v${version}-setup.sh\` 一鍵完成安裝 |`,
+    `| **Linux / macOS** | \`${pluginName}-v${version}-uninstall.sh\` | **解除安裝腳本**：執行 \`bash ${pluginName}-v${version}-uninstall.sh\` 乾淨移除 |`,
+    `| **手動壓縮包 (ZIP)** | \`${pluginName}-v${version}.zip\` | 手動解壓縮至 \`~/.gemini/config/plugins/${pluginName}/\` |`,
+    `| **手動壓縮包 (TAR.GZ)** | \`${pluginName}-v${version}.tar.gz\` | 手動解壓縮至 \`~/.gemini/config/plugins/${pluginName}/\` |`,
+    '',
+    '---',
+    '',
+    '## 🔒 SHA-256 校驗碼 / Checksums (`SHA256SUMS.txt`)',
+    '',
+    '```text',
+    checksumContent.trim(),
+    '```',
+    ''
+  ].join('\n');
+
+  fs.writeFileSync(path.join(DIST_DIR, 'RELEASE_NOTES.md'), releaseNotesMd, 'utf8');
+
   console.log('\n========================================================');
   console.log('  🎉 打包完成！輸出檔案位於 dist/ 目錄：');
   console.log('========================================================');
@@ -289,6 +336,7 @@ fi
     console.log(`     SHA-256: ${c.hash}`);
   }
   console.log(`  📄 SHA256SUMS.txt (校驗清單)`);
+  console.log(`  📝 RELEASE_NOTES.md (GitHub Release 完整說明檔)`);
   console.log('========================================================\n');
 }
 
