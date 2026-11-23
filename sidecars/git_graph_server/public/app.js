@@ -1121,19 +1121,39 @@
   }
 
   // 事件綁定
+  let currentInstalledVersion = '';
   let latestAvailableVersion = '';
+  let hasAvailableUpdate = false;
 
-  async function checkPluginUpdate(force = false) {
+  async function checkPluginUpdate(force = false, notifyIfLatest = false) {
     if (!btnUpdatePlugin) return;
     try {
       const res = await fetch(`/api/update-check${force ? '?force=1' : ''}`).then(r => r.json());
-      if (res && res.ok && res.hasUpdate && res.latestVersion) {
-        latestAvailableVersion = res.latestVersion;
-        btnUpdatePlugin.textContent = `⬆ v${res.latestVersion}`;
-        btnUpdatePlugin.title = `發現新版本 v${res.latestVersion}（目前 v${res.currentVersion}）\n點擊一鍵自動下載並更新`;
-        btnUpdatePlugin.classList.remove('hidden');
-      } else {
-        btnUpdatePlugin.classList.add('hidden');
+      if (res && res.ok) {
+        currentInstalledVersion = res.currentVersion || currentInstalledVersion;
+        if (res.hasUpdate && res.latestVersion) {
+          hasAvailableUpdate = true;
+          latestAvailableVersion = res.latestVersion;
+          btnUpdatePlugin.classList.add('has-update');
+          btnUpdatePlugin.textContent = `⬆ v${res.latestVersion}`;
+          btnUpdatePlugin.title = `發現新版本 v${res.latestVersion}（目前版本 v${res.currentVersion}）\n點擊一鍵自動下載並更新`;
+          if (notifyIfLatest) {
+            showToast(`🚀 發現新版本 v${res.latestVersion}，再次點擊即可自動更新！`);
+          }
+        } else {
+          hasAvailableUpdate = false;
+          latestAvailableVersion = '';
+          btnUpdatePlugin.classList.remove('has-update');
+          btnUpdatePlugin.textContent = `v${res.currentVersion || '1.0.0'}`;
+          btnUpdatePlugin.title = `目前版本: v${res.currentVersion || '1.0.0'}（點擊檢查 GitHub 最新版本）`;
+          if (notifyIfLatest) {
+            if (res.offline) {
+              showToast(`⚠️ 無法連線至 GitHub（目前版本 v${res.currentVersion}）`);
+            } else {
+              showToast(`✔ 目前已是最新版本 (v${res.currentVersion})`);
+            }
+          }
+        }
       }
     } catch {}
   }
@@ -1141,6 +1161,16 @@
   if (btnUpdatePlugin) {
     btnUpdatePlugin.addEventListener('click', async () => {
       if (btnUpdatePlugin.disabled) return;
+
+      // 若目前無新版本，點擊時主動檢查是否有新版本
+      if (!hasAvailableUpdate) {
+        btnUpdatePlugin.disabled = true;
+        btnUpdatePlugin.textContent = '檢查中...';
+        await checkPluginUpdate(true, true);
+        btnUpdatePlugin.disabled = false;
+        return;
+      }
+
       const targetVer = latestAvailableVersion ? `v${latestAvailableVersion}` : '最新版本';
       btnUpdatePlugin.disabled = true;
       btnUpdatePlugin.textContent = '⏳ 更新中...';

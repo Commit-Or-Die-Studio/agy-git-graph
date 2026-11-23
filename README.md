@@ -3,7 +3,7 @@
 > **Visual Git branch graph and commit diff viewer for AGY Auxiliary Pane.**  
 > **專為 Antigravity (AGY) 輔助面板打造的 Git 視覺化分支圖與 Commit Diff 檢視器。**
 
-[![Version](https://img.shields.io/badge/Version-v1.0.7-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
+[![Version](https://img.shields.io/badge/Version-v1.0.8-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Antigravity](https://img.shields.io/badge/Platform-Antigravity%20(AGY)-673ab7.svg)](#)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-Zero%20(Native%20Node.js)-success.svg)](#)
@@ -110,6 +110,11 @@ node scripts/package.mjs --next
 ---
 
 ## 📋 版本更新紀錄 / Changelog
+
+### v1.0.8 (2026-11-24)
+* 🏷️ **頂部工具列常駐顯示目前版本號與手動檢查更新**：
+  * 於第一排工具列右上角（重新整理按鈕旁）常駐顯示目前安裝版本標籤（如 `v1.0.8`），隨時可確認當前外掛版本。
+  * 平常點擊該版本標籤可主動連線 GitHub 檢查是否有新版本並顯示 Toast 狀態提示；當偵測到新版本時，標籤將直接亮起轉換為 `⬆ vX.Y.Z` 一鍵熱更新按鈕。
 
 ### v1.0.7 (2026-11-24)
 * 🔔 **新增 GitHub Release 新版本偵測與頂部提示按鈕**：
