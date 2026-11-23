@@ -55,6 +55,7 @@ agy-git-graph/
 ├── plugin.json                 # AGY Plugin Manifest 清單設定檔
 ├── package.json                # 專案資訊與打包腳本配置
 ├── AGENTS.md                   # AI 代理人開發、文件同步與發布規範
+├── TODO.md                     # 待辦事項與 v2.0.0 跨平台規劃
 ├── LICENSE                     # MIT License
 ├── assets/
 │   └── logo.svg                # 外掛專屬圖示
