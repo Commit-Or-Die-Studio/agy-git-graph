@@ -37,6 +37,7 @@
   const branchSelect = $('branch-select');
   const searchInput = $('search-input');
   const btnClearSearch = $('btn-clear-search');
+  const btnUpdatePlugin = $('btn-update-plugin');
   const btnRefresh = $('btn-refresh');
   const btnToggleRepo = $('btn-toggle-repo');
   const repoSwitchBar = $('repo-switch-bar');
@@ -1120,12 +1121,55 @@
   }
 
   // 事件綁定
+  let latestAvailableVersion = '';
+
+  async function checkPluginUpdate(force = false) {
+    if (!btnUpdatePlugin) return;
+    try {
+      const res = await fetch(`/api/update-check${force ? '?force=1' : ''}`).then(r => r.json());
+      if (res && res.ok && res.hasUpdate && res.latestVersion) {
+        latestAvailableVersion = res.latestVersion;
+        btnUpdatePlugin.textContent = `⬆ v${res.latestVersion}`;
+        btnUpdatePlugin.title = `發現新版本 v${res.latestVersion}（目前 v${res.currentVersion}）\n點擊一鍵自動下載並更新`;
+        btnUpdatePlugin.classList.remove('hidden');
+      } else {
+        btnUpdatePlugin.classList.add('hidden');
+      }
+    } catch {}
+  }
+
+  if (btnUpdatePlugin) {
+    btnUpdatePlugin.addEventListener('click', async () => {
+      if (btnUpdatePlugin.disabled) return;
+      const targetVer = latestAvailableVersion ? `v${latestAvailableVersion}` : '最新版本';
+      btnUpdatePlugin.disabled = true;
+      btnUpdatePlugin.textContent = '⏳ 更新中...';
+      try {
+        const res = await fetch('/api/update-apply', { method: 'POST' }).then(r => r.json());
+        if (res && res.ok) {
+          btnUpdatePlugin.textContent = `✔ v${res.updatedTo}`;
+          showToast(`🎉 已更新至 v${res.updatedTo}，正在重新載入...`);
+          setTimeout(() => {
+            window.location.reload();
+          }, 1200);
+        } else {
+          throw new Error((res && res.error) || '更新失敗');
+        }
+      } catch (err) {
+        showToast(`❌ 自動更新失敗: ${err.message}`);
+        btnUpdatePlugin.disabled = false;
+        btnUpdatePlugin.textContent = `⬆ ${targetVer}`;
+      }
+    });
+  }
+
   btnRefresh.addEventListener('click', async () => {
     btnRefresh.style.transition = 'transform 0.6s ease';
     btnRefresh.style.transform = 'rotate(360deg)';
     try {
-      // 嘗試拉取遠端最新變更 (非同步 quiet fetch)
+      // 嘗試拉取遠端最新變更 (非同步 quiet fetch) 與檢查外掛新版本
       fetch(apiUrl('/api/fetch'), { method: 'POST' }).catch(() => {});
+      checkPluginUpdate(true);
     } catch {}
     const isGit = await loadRepoMeta();
     if (isGit) {
@@ -1427,9 +1471,10 @@
     }
   }
 
-  // 每 1.2 秒輪詢檢查對話切換，每 1.5 秒輪詢檢查本地 Git state (耗能極低，僅 rev-parse HEAD 與 status --porcelain)
+  // 每 1.2 秒輪詢檢查對話切換，每 1.5 秒輪詢檢查本地 Git state，每 30 分鐘檢查一次 GitHub 外掛新版本
   setInterval(syncActiveSessionRepo, 1200);
   setInterval(checkGitStateChange, 1500);
+  setInterval(() => checkPluginUpdate(false), 30 * 60 * 1000);
 
   // 初始啟動
   (async () => {
@@ -1437,6 +1482,7 @@
     loadingState.classList.remove('hidden');
     emptyState.classList.add('hidden');
 
+    checkPluginUpdate(false);
     await loadProjects();
     await syncActiveSessionRepo();
     const isGit = await loadRepoMeta();

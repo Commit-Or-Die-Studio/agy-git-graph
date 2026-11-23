@@ -290,6 +290,34 @@ body, html {
   gap: 4px;
 }
 
+.update-pill-btn {
+  background: linear-gradient(135deg, rgba(166, 227, 161, 0.22), rgba(137, 180, 250, 0.22));
+  color: #a6e3a1;
+  border: 1px solid #a6e3a1;
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  box-shadow: 0 0 8px rgba(166, 227, 161, 0.25);
+  transition: all 0.15s ease;
+}
+
+.update-pill-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(166, 227, 161, 0.35), rgba(137, 180, 250, 0.35));
+  transform: translateY(-1px);
+  box-shadow: 0 0 10px rgba(166, 227, 161, 0.45);
+}
+
+.update-pill-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .icon-btn {
   background: transparent;
   border: 1px solid transparent;

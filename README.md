@@ -3,7 +3,7 @@
 > **Visual Git branch graph and commit diff viewer for AGY Auxiliary Pane.**  
 > **專為 Antigravity (AGY) 輔助面板打造的 Git 視覺化分支圖與 Commit Diff 檢視器。**
 
-[![Version](https://img.shields.io/badge/Version-v1.0.6-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
+[![Version](https://img.shields.io/badge/Version-v1.0.7-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Antigravity](https://img.shields.io/badge/Platform-Antigravity%20(AGY)-673ab7.svg)](#)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-Zero%20(Native%20Node.js)-success.svg)](#)
@@ -41,6 +41,10 @@ It embeds seamlessly into the AGY Auxiliary Pane (~350px-500px), rendering smoot
 * 🏢 **支援多專案、Submodule 子模組與私有倉庫切換 (Multi-Repo & Submodule Switch)**  
   完全在本地執行 `git` 指令，安全無資安疑慮；內建 AGY 專案與 Git Submodule 階層選單，亦支援手動輸入任意本機倉庫路徑。  
   *Local execution ensures 100% security for corporate private repos with built-in AGY project and submodule selector.*
+
+* 🔔 **GitHub 新版偵測與一鍵熱更新 (Release Update Notification & One-Click Hot Update)**  
+  自動比對 GitHub 最新 Release 版本，當有新版本發布時於面板右上角顯示 `⬆ vX.Y.Z` 提示按鈕；點擊即可自動下載更新包、校驗 `SHA256SUMS.txt`、覆蓋安裝並自動熱重啟面板，無須重開 AGY。  
+  *Automatically detects new GitHub Releases and displays an update pill in the toolbar for one-click SHA-256 verified hot updating.*
 
 ---
 
@@ -106,6 +110,14 @@ node scripts/package.mjs --next
 ---
 
 ## 📋 版本更新紀錄 / Changelog
+
+### v1.0.7 (2026-11-24)
+* 🔔 **新增 GitHub Release 新版本偵測與頂部提示按鈕**：
+  * 面板啟動時、定時每 30 分鐘、以及點擊「重新整理 🔄」時自動檢查 GitHub 最新 Release（離線環境下靜默略過不影響本地運作）。
+  * 當線上最新 Release 版本大於本地安裝版本時，於工具列右上角顯示醒目的綠色漸層按鈕 `⬆ vX.Y.Z`。
+* ⚡ **一鍵自動下載、SHA-256 校驗與免重開機熱更新**：
+  * 點擊 `⬆ vX.Y.Z` 按鈕即可於背景自動下載最新發行包與 `SHA256SUMS.txt` 進行完整性驗證。
+  * 校驗通過後自動解壓縮覆蓋外掛檔案並觸發 Sidecar 伺服器熱重啟（`restart_policy: always`），前端自動重載切換至新版介面，全程無須手動下載或重開 AGY。
 
 ### v1.0.6 (2026-11-24)
 * 🌿 **修復帶斜線 `/` 的本地分支誤判為遠端分支**：

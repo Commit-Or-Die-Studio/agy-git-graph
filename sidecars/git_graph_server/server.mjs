@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,6 +11,71 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const PLUGIN_ROOT = path.resolve(__dirname, '..', '..');
+const GITHUB_RELEASE_API = 'https://api.github.com/repos/Commit-Or-Die-Studio/agy-git-graph/releases/latest';
+
+// 讀取本地外掛版本號
+function getLocalVersion() {
+  for (const name of ['plugin.json', 'package.json']) {
+    try {
+      const p = path.join(PLUGIN_ROOT, name);
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (data && data.version) return String(data.version).trim();
+      }
+    } catch {}
+  }
+  return '1.0.0';
+}
+
+// 語意化版本比對 (a > b 回傳 1, a < b 回傳 -1, 相等回傳 0)
+function compareSemver(a, b) {
+  const pa = String(a || '').replace(/^v/i, '').split('-')[0].split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '').replace(/^v/i, '').split('-')[0].split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+// 遞迴複製目錄
+function copyDirRecursive(src, dest) {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(s, d);
+    } else {
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
+let releaseCheckCache = null; // { timestamp, data }
+
+async function fetchLatestReleaseInfo(force = false) {
+  if (!force && releaseCheckCache && Date.now() - releaseCheckCache.timestamp < 15 * 60 * 1000) {
+    return releaseCheckCache.data;
+  }
+  const res = await fetch(GITHUB_RELEASE_API, {
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': 'agy-git-graph-updater'
+    },
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub API HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  releaseCheckCache = { timestamp: Date.now(), data };
+  return data;
+}
 
 let DatabaseSyncClass = null;
 try {
@@ -1048,6 +1114,126 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
     if (!queryRepo) return sendJson(res, { ok: false, error: 'No repo' }, 400);
     const fetchRes = await runGit(['fetch', '--prune', '--quiet'], queryRepo);
     return sendJson(res, { ok: fetchRes.ok, error: fetchRes.error });
+  }
+
+  // API: 檢查 GitHub 是否有新版本 Release
+  if (pathname === '/api/update-check' && req.method === 'GET') {
+    const currentVersion = getLocalVersion();
+    const force = reqUrl.searchParams.get('force') === '1';
+    try {
+      const release = await fetchLatestReleaseInfo(force);
+      const latestVersion = String(release.tag_name || '').replace(/^v/i, '').trim() || currentVersion;
+      const hasUpdate = compareSemver(latestVersion, currentVersion) > 0;
+      return sendJson(res, {
+        ok: true,
+        currentVersion,
+        latestVersion,
+        hasUpdate,
+        releaseName: release.name || `v${latestVersion}`,
+        htmlUrl: release.html_url || '',
+        body: release.body || ''
+      });
+    } catch (err) {
+      return sendJson(res, {
+        ok: true,
+        currentVersion,
+        latestVersion: currentVersion,
+        hasUpdate: false,
+        offline: true,
+        error: err.message
+      });
+    }
+  }
+
+  // API: 一鍵下載並套用 GitHub 最新版本 Release (含 SHA-256 校驗與自動熱重啟)
+  if (pathname === '/api/update-apply' && req.method === 'POST') {
+    const currentVersion = getLocalVersion();
+    let tmpDir = '';
+    try {
+      const release = await fetchLatestReleaseInfo(true);
+      const latestVersion = String(release.tag_name || '').replace(/^v/i, '').trim();
+      if (!latestVersion || compareSemver(latestVersion, currentVersion) <= 0) {
+        return sendJson(res, { ok: false, error: `目前已是最新版本 (v${currentVersion})` }, 400);
+      }
+
+      const assets = Array.isArray(release.assets) ? release.assets : [];
+      const tarAsset = assets.find(a => a.name && a.name.endsWith('.tar.gz'));
+      if (!tarAsset || !tarAsset.browser_download_url) {
+        throw new Error('找不到新版本的 .tar.gz 更新套件');
+      }
+
+      // 1. 下載 .tar.gz 檔案
+      const tarResp = await fetch(tarAsset.browser_download_url, {
+        headers: { 'User-Agent': 'agy-git-graph-updater' },
+        signal: AbortSignal.timeout(30000)
+      });
+      if (!tarResp.ok) {
+        throw new Error(`下載更新包失敗 (HTTP ${tarResp.status})`);
+      }
+      const tarBuf = Buffer.from(await tarResp.arrayBuffer());
+
+      // 2. 若有 SHA256SUMS.txt 則進行完整性校驗
+      const sumAsset = assets.find(a => a.name === 'SHA256SUMS.txt');
+      if (sumAsset && sumAsset.browser_download_url) {
+        const sumResp = await fetch(sumAsset.browser_download_url, {
+          headers: { 'User-Agent': 'agy-git-graph-updater' },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (sumResp.ok) {
+          const sumText = await sumResp.text();
+          const line = sumText.split(/\r?\n/).find(l => l.includes(tarAsset.name));
+          if (line) {
+            const expectedHash = line.trim().split(/\s+/)[0].toLowerCase();
+            const actualHash = crypto.createHash('sha256').update(tarBuf).digest('hex').toLowerCase();
+            if (expectedHash && expectedHash !== actualHash) {
+              throw new Error('更新包 SHA-256 校驗碼不符，已中止安裝');
+            }
+          }
+        }
+      }
+
+      // 3. 解壓縮至系統暫存目錄
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-git-graph-upd-'));
+      const tarPath = path.join(tmpDir, tarAsset.name);
+      fs.writeFileSync(tarPath, tarBuf);
+      const tarBin = process.platform === 'win32' ? 'tar.exe' : 'tar';
+      await execFileAsync(tarBin, ['-xzf', tarPath, '-C', tmpDir]);
+
+      const extractedDir = path.join(tmpDir, 'agy-git-graph');
+      const sourceDir = fs.existsSync(extractedDir) ? extractedDir : tmpDir;
+
+      // 4. 覆蓋安裝至外掛目錄 (若當前為開發用 Git 倉庫，僅更新全域安裝目錄，保護開發區程式碼)
+      const isDevRepo = fs.existsSync(path.join(PLUGIN_ROOT, '.git'));
+      const globalPluginDir = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'agy-git-graph');
+
+      if (!isDevRepo) {
+        copyDirRecursive(sourceDir, PLUGIN_ROOT);
+      }
+      if (fs.existsSync(globalPluginDir) && !isSamePath(globalPluginDir, PLUGIN_ROOT)) {
+        copyDirRecursive(sourceDir, globalPluginDir);
+      }
+
+      releaseCheckCache = null;
+
+      sendJson(res, {
+        ok: true,
+        previousVersion: currentVersion,
+        updatedTo: latestVersion,
+        restarting: !isDevRepo
+      });
+
+      // 非開發模式下，延遲 400ms 退出程序，由 AGY (restart_policy: always) 自動拉起新版伺服器
+      if (!isDevRepo) {
+        setTimeout(() => process.exit(0), 400);
+      }
+      return;
+    } catch (err) {
+      return sendJson(res, { ok: false, error: err.message }, 500);
+    } finally {
+      if (tmpDir) {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      }
+    }
   }
 
   // API: 在系統預設瀏覽器以獨立全螢幕視窗開啟 Diff
