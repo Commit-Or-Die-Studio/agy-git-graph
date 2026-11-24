@@ -56,25 +56,43 @@ function copyDirRecursive(src, dest) {
   }
 }
 
+const UPDATE_CHECK_COOLDOWN_MS = 60 * 1000; // 後端記憶體快取冷卻 60 秒，防止短時間重複開關面板或連點頻繁打 GitHub API
 let releaseCheckCache = null; // { timestamp, data }
+let releaseCheckInFlight = null;
 
-async function fetchLatestReleaseInfo(force = false) {
-  if (!force && releaseCheckCache && Date.now() - releaseCheckCache.timestamp < 15 * 60 * 1000) {
-    return releaseCheckCache.data;
+async function fetchLatestReleaseInfo({ bypassCooldown = false } = {}) {
+  const now = Date.now();
+  if (!bypassCooldown && releaseCheckCache && now - releaseCheckCache.timestamp < UPDATE_CHECK_COOLDOWN_MS) {
+    return { data: releaseCheckCache.data, cached: true };
   }
-  const res = await fetch(GITHUB_RELEASE_API, {
-    headers: {
-      'Accept': 'application/vnd.github+json',
-      'User-Agent': 'agy-git-graph-updater'
-    },
-    signal: AbortSignal.timeout(8000)
-  });
-  if (!res.ok) {
-    throw new Error(`GitHub API HTTP ${res.status}`);
+
+  if (releaseCheckInFlight) {
+    const data = await releaseCheckInFlight;
+    return { data, cached: false };
   }
-  const data = await res.json();
-  releaseCheckCache = { timestamp: Date.now(), data };
-  return data;
+
+  releaseCheckInFlight = (async () => {
+    const res = await fetch(GITHUB_RELEASE_API, {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'agy-git-graph-updater'
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) {
+      throw new Error(`GitHub API HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    releaseCheckCache = { timestamp: Date.now(), data };
+    return data;
+  })();
+
+  try {
+    const data = await releaseCheckInFlight;
+    return { data, cached: false };
+  } finally {
+    releaseCheckInFlight = null;
+  }
 }
 
 let DatabaseSyncClass = null;
@@ -1119,9 +1137,8 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
   // API: 檢查 GitHub 是否有新版本 Release
   if (pathname === '/api/update-check' && req.method === 'GET') {
     const currentVersion = getLocalVersion();
-    const force = reqUrl.searchParams.get('force') === '1';
     try {
-      const release = await fetchLatestReleaseInfo(force);
+      const { data: release, cached } = await fetchLatestReleaseInfo();
       const latestVersion = String(release.tag_name || '').replace(/^v/i, '').trim() || currentVersion;
       const hasUpdate = compareSemver(latestVersion, currentVersion) > 0;
       return sendJson(res, {
@@ -1129,6 +1146,7 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
         currentVersion,
         latestVersion,
         hasUpdate,
+        cached,
         releaseName: release.name || `v${latestVersion}`,
         htmlUrl: release.html_url || '',
         body: release.body || ''
@@ -1150,7 +1168,7 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
     const currentVersion = getLocalVersion();
     let tmpDir = '';
     try {
-      const release = await fetchLatestReleaseInfo(true);
+      const { data: release } = await fetchLatestReleaseInfo({ bypassCooldown: true });
       const latestVersion = String(release.tag_name || '').replace(/^v/i, '').trim();
       if (!latestVersion || compareSemver(latestVersion, currentVersion) <= 0) {
         return sendJson(res, { ok: false, error: `目前已是最新版本 (v${currentVersion})` }, 400);

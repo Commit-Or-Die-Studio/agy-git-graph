@@ -1197,9 +1197,8 @@
     btnRefresh.style.transition = 'transform 0.6s ease';
     btnRefresh.style.transform = 'rotate(360deg)';
     try {
-      // 嘗試拉取遠端最新變更 (非同步 quiet fetch) 與檢查外掛新版本
+      // 嘗試拉取遠端最新變更 (非同步 quiet fetch)，不觸發 GitHub 外掛版本檢查
       fetch(apiUrl('/api/fetch'), { method: 'POST' }).catch(() => {});
-      checkPluginUpdate(true);
     } catch {}
     const isGit = await loadRepoMeta();
     if (isGit) {
@@ -1501,10 +1500,10 @@
     }
   }
 
-  // 每 1.2 秒輪詢檢查對話切換，每 1.5 秒輪詢檢查本地 Git state，每 30 分鐘檢查一次 GitHub 外掛新版本
+  // 每 1.2 秒輪詢檢查對話切換，每 1.5 秒輪詢檢查本地 Git state，每 6 小時檢查一次 GitHub 外掛新版本
   setInterval(syncActiveSessionRepo, 1200);
   setInterval(checkGitStateChange, 1500);
-  setInterval(() => checkPluginUpdate(false), 30 * 60 * 1000);
+  setInterval(() => checkPluginUpdate(false), 6 * 60 * 60 * 1000);
 
   // 初始啟動
   (async () => {

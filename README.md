@@ -43,8 +43,8 @@ It embeds seamlessly into the AGY Auxiliary Pane (~350px-500px), rendering smoot
   *Local execution ensures 100% security for corporate private repos with built-in AGY project and submodule selector.*
 
 * 🔔 **GitHub 新版偵測與一鍵熱更新 (Release Update Notification & One-Click Hot Update)**  
-  自動比對 GitHub 最新 Release 版本，當有新版本發布時於面板右上角顯示 `⬆ vX.Y.Z` 提示按鈕；點擊即可自動下載更新包、校驗 `SHA256SUMS.txt`、覆蓋安裝並自動熱重啟面板，無須重開 AGY。  
-  *Automatically detects new GitHub Releases and displays an update pill in the toolbar for one-click SHA-256 verified hot updating.*
+  面板開啟時與每 6 小時自動比對 GitHub 最新 Release 版本（後端記憶體快取提供 60 秒防頻繁冷卻保護，重新整理按鈕 `🔄` 僅更新本地 Git 狀態；點擊右上角版本標籤可手動檢查）；當有新版本發布時顯示 `⬆ vX.Y.Z` 提示按鈕，點擊即可自動下載更新包、校驗 `SHA256SUMS.txt`、覆蓋安裝並自動熱重啟面板，無須重開 AGY。  
+  *Checks GitHub Releases on panel open, every 6 hours, or when clicking the version pill (backed by a 60s server-side cooldown cache, decoupled from the local refresh button) with one-click SHA-256 verified hot updating.*
 
 ---
 
