@@ -17,7 +17,10 @@
   const PADDING_LEFT = 12;
 
   // 狀態變數
-  let currentRepo = localStorage.getItem('agy_git_graph_repo') || '';
+  // 網址帶 ?repo=<路徑> 時（例如 Claude 桌面版瀏覽器窗格，每個 Session 各自開一個畫面），
+  // 以該倉庫為準，不沿用其他畫面記住的倉庫；未帶參數時維持原本 AGY 行為
+  const urlRepo = (new URLSearchParams(window.location.search).get('repo') || '').trim();
+  let currentRepo = urlRepo || localStorage.getItem('agy_git_graph_repo') || '';
   let allCommits = [];
   let allLinks = [];
   let maxLanes = 1;

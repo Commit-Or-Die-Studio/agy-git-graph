@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "git-graph",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["sidecars/git_graph_server/server.mjs", "--port", "52899"],
+      "port": 52899
+    }
+  ]
+}

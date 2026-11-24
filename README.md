@@ -57,6 +57,8 @@ agy-git-graph/
 ├── AGENTS.md                   # AI 代理人開發、文件同步與發布規範
 ├── TODO.md                     # 待辦事項與 v2.0.0 跨平台規劃
 ├── LICENSE                     # MIT License
+├── .claude/
+│   └── launch.json             # Claude 桌面版瀏覽器窗格啟動設定（git-graph 伺服器，埠 52899）
 ├── assets/
 │   └── logo.svg                # 外掛專屬圖示
 ├── sidecars/
@@ -92,6 +94,19 @@ agy-git-graph/
 
 安裝完成後，重啟或重新整理 Antigravity (AGY)，於右側輔助面板開啟 **Git Graph** 即可使用。
 
+### 在 Claude 桌面版使用（瀏覽器窗格）
+Git Graph 的畫面本身是一個本機網頁，可直接在 **Claude 桌面版 Code 分頁內建的瀏覽器窗格**開啟，畫面與功能和 AGY 完全一致，不需另外切換視窗：
+
+1. 專案內的 [`.claude/launch.json`](.claude/launch.json) 已設定以 `node` 在 `52899` 埠啟動 `server.mjs`（與 AGY 自己的 Sidecar 埠號錯開）。
+2. 在 Claude 對話中要求開啟 Git Graph（或以 App 的預覽功能啟動 `git-graph` 設定），再於瀏覽器窗格開啟：
+   ```text
+   http://localhost:52899/?repo=<目前 Session 的專案資料夾>
+   ```
+
+* **每個 Session 各自獨立**：與 AGY 相同，後端伺服器共用一個，每個 Session 的畫面各自帶 `?repo=` 指定自己的倉庫；開啟後即顯示該 Session 專案的 Git，不會沿用其他畫面記住的倉庫。
+* 網址未帶 `?repo=` 時維持原本行為（沿用上次選擇的倉庫，或依 AGY 對話自動偵測）。
+* 需要電腦上已安裝 Node.js。
+
 ---
 
 ## 🛠️ 本地開發與打包 / Local Development & Packaging
@@ -100,7 +115,7 @@ agy-git-graph/
 ```bash
 node sidecars/git_graph_server/server.mjs
 ```
-伺服器預設將在 `http://127.0.0.1:52888` 啟動。
+伺服器預設將在 `http://127.0.0.1:52888` 啟動（可用 `--port <埠號>` 指定）。瀏覽器開啟時可加上 `?repo=<倉庫路徑>` 直接指定要檢視的倉庫。
 
 ### 2. 本機預覽打包（不更動工作區版號）
 ```bash
