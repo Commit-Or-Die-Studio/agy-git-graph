@@ -3,7 +3,7 @@
 > **Visual Git branch graph and commit diff viewer for AGY Auxiliary Pane.**  
 > **專為 Antigravity (AGY) 輔助面板打造的 Git 視覺化分支圖與 Commit Diff 檢視器。**
 
-[![Version](https://img.shields.io/badge/Version-v1.0.9-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
+[![Version](https://img.shields.io/badge/Version-v2.0.0-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Antigravity](https://img.shields.io/badge/Platform-Antigravity%20(AGY)-673ab7.svg)](#)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-Zero%20(Native%20Node.js)-success.svg)](#)
@@ -166,6 +166,25 @@ node scripts/package.mjs --next
 ---
 
 ## 📋 版本更新紀錄 / Changelog
+
+### v2.0.0 (2026-11-24)
+* 🤖 **新增 Claude 桌面版支援：`/git-graph`**：
+  * 在 Claude 桌面版輸入 `/git-graph`，即於右側內建瀏覽器窗格開啟目前專案的 Git Graph，畫面與功能和 AGY 完全一致，不需切換視窗。
+  * 每個 Session 各自獨立：共用一個背景伺服器，各畫面以網址 `?repo=` 指定自己的倉庫；關閉任一 Session 不影響其他 Session，也與 AGY 自己的 Sidecar 互不干擾。
+  * 伺服器以獨立背景程序執行；一鍵更新或重新安裝後會自動以新版重新啟動，已開啟的頁面會自動重新連線。
+* 🌐 **支援 Claude 透過 SSH 連到遠端機器開發**：
+  * 自動偵測 SSH Session，第一次使用時請使用者填寫連線設定，並依遠端機器記錄（同一台機器的所有專案共用）。
+  * 透過伺服器確認頁面是否真的連上（已開啟的頁面數秒內即可確認）。
+* 🔌 **新增獨立的 Windows SSH 通道安裝檔（`ssh-tunnel-setup.exe`）**：
+  * 給在自己的 Windows 用 Claude 透過 SSH 連到遠端開發的人，只安裝背景 SSH 通道，讓 Claude 右側的 Git Graph 連到遠端伺服器。
+  * 只用金鑰登入、斷線自動重連、可設定多台機器；安裝前檢查本機埠與金鑰登入，可選擇登入 Windows 時自動啟動（啟用前說明原因與風險）；更新時沿用設定不再詢問。
+* 📦 **安裝檔改版**：
+  * AGY 固定安裝；Claude `/git-graph` 技能為選用、預設不勾（`setup.exe` 安裝選項視窗、`setup.sh` 詢問 `(y/N)` 或 `--claude`）；靜默與非互動安裝維持目前狀態。
+  * 透過 AGY 一鍵更新時不會自動安裝 Claude 功能；已安裝者會自動同步技能內容。
+* 🛠️ **修正與改進**：
+  * 網址指定的倉庫不存在或不是 Git 倉庫時，直接顯示提示，不再默默改顯示其他倉庫。
+  * Windows 一鍵更新改用系統內建 `tar.exe`，避免 PATH 中 Git Bash 的 tar 導致解壓縮失敗。
+  * 背景執行的 git / tar 子程序一律隱藏視窗，不再閃爍主控台視窗。
 
 ### v1.0.9 (2026-11-24)
 * ⏱️ **外掛新版本檢查頻率調整**：
