@@ -3,7 +3,7 @@
 > **Visual Git branch graph and commit diff viewer for AGY Auxiliary Pane.**  
 > **專為 Antigravity (AGY) 輔助面板打造的 Git 視覺化分支圖與 Commit Diff 檢視器。**
 
-[![Version](https://img.shields.io/badge/Version-v1.0.8-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
+[![Version](https://img.shields.io/badge/Version-v1.0.9-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Antigravity](https://img.shields.io/badge/Platform-Antigravity%20(AGY)-673ab7.svg)](#)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-Zero%20(Native%20Node.js)-success.svg)](#)
@@ -111,6 +111,15 @@ node scripts/package.mjs --next
 ---
 
 ## 📋 版本更新紀錄 / Changelog
+
+### v1.0.9 (2026-11-24)
+* ⏱️ **外掛新版本檢查頻率調整**：
+  * 面板長時間開啟時，自動檢查 GitHub 最新 Release 的間隔由每 30 分鐘拉長為**每 6 小時**；面板開啟時仍會檢查一次。
+* 🔄 **重新整理按鈕與版本檢查脫鉤**：
+  * 點擊「重新整理 🔄」僅重整本地 Git 狀態並執行 `git fetch`，不再每次連線 GitHub 檢查外掛版本；需要時可點擊右上角版本標籤手動檢查。
+* 🛡️ **後端 60 秒冷卻與併發合併保護**：
+  * Sidecar 後端以記憶體快取控管 60 秒冷卻期，並合併同時發出的檢查請求，避免重複開關面板或連續點擊時頻繁消耗 GitHub API 額度。
+  * 一鍵熱更新時仍會略過冷卻、即時取得最新 Release 資訊。
 
 ### v1.0.8 (2026-11-24)
 * 🏷️ **頂部工具列常駐顯示目前版本號與手動檢查更新**：

@@ -2,7 +2,7 @@
   "name": "agy-git-graph",
   "displayName": "AGY Git Graph",
   "description": "Visual Git branch graph and commit diff viewer for AGY Auxiliary Pane. / 專為 AGY 側邊欄打造的 Git 視覺化分支圖與 Commit Diff 檢視器。",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "author": "Commit-Or-Die-Studio",
   "repository": {
     "type": "git",
