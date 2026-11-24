@@ -1,11 +1,11 @@
 # AGY Git Graph 🌿
 
-> **Visual Git branch graph and commit diff viewer for AGY Auxiliary Pane.**  
-> **專為 Antigravity (AGY) 輔助面板打造的 Git 視覺化分支圖與 Commit Diff 檢視器。**
+> **Visual Git branch graph and commit diff viewer for the AGY Auxiliary Pane and Claude Desktop (`/git-graph`).**  
+> **專為 Antigravity (AGY) 輔助面板與 Claude 桌面版（`/git-graph`）打造的 Git 視覺化分支圖與 Commit Diff 檢視器。**
 
 [![Version](https://img.shields.io/badge/Version-v2.0.0-orange.svg)](https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: Antigravity](https://img.shields.io/badge/Platform-Antigravity%20(AGY)-673ab7.svg)](#)
+[![Platform: Antigravity | Claude Desktop](https://img.shields.io/badge/Platform-Antigravity%20(AGY)%20%7C%20Claude%20Desktop-673ab7.svg)](#)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-Zero%20(Native%20Node.js)-success.svg)](#)
 
 ---
@@ -15,8 +15,12 @@
 **AGY Git Graph** 是專為 **Antigravity (AGY) 桌面版** 量身打造的原生 UI 外掛（UI Plugin / Sidecar）。  
 常駐於 AGY 右側輔助面板（Auxiliary Pane，約 350px~500px 寬度），以流暢彩色的多軌平滑曲線直觀呈現專案的分支走向、Merge 線條、Commit 歷史與變更檔案 Diff，支援公司 Organization 私有儲存庫、Submodule 子模組切換與純本地離線運作。
 
+自 v2.0.0 起也支援 **Claude 桌面版**：在 Claude 輸入 `/git-graph`，即在對話旁的內建瀏覽器窗格開啟目前專案的 Git Graph，畫面與功能和 AGY 一致；透過 SSH 連到遠端機器開發時也能使用（搭配 Windows 用的 SSH 通道安裝檔）。詳見下方[「在 Claude 桌面版使用」](#在-claude-桌面版使用git-graph)。
+
 **AGY Git Graph** is a native UI Plugin & Sidecar tailored for the **Antigravity (AGY) Desktop App**.  
 It embeds seamlessly into the AGY Auxiliary Pane (~350px-500px), rendering smooth multi-lane Bezier curves for branch trajectories, merge topologies, commit histories, and inline file diffs—fully offline and private-repo friendly with zero external dependencies.
+
+Since v2.0.0 it also works in **Claude Desktop**: type `/git-graph` to open the current project's Git Graph in the built-in browser pane beside the chat—same UI as in AGY—including sessions connected to remote machines over SSH (with the Windows SSH tunnel installer).
 
 ---
 
@@ -41,6 +45,14 @@ It embeds seamlessly into the AGY Auxiliary Pane (~350px-500px), rendering smoot
 * 🏢 **支援多專案、Submodule 子模組與私有倉庫切換 (Multi-Repo & Submodule Switch)**  
   完全在本地執行 `git` 指令，安全無資安疑慮；內建 AGY 專案與 Git Submodule 階層選單，亦支援手動輸入任意本機倉庫路徑。  
   *Local execution ensures 100% security for corporate private repos with built-in AGY project and submodule selector.*
+
+* 🤖 **支援 Claude 桌面版 `/git-graph` (Claude Desktop Support)**  
+  在 Claude 桌面版輸入 `/git-graph`，即於對話旁的內建瀏覽器窗格開啟目前專案的 Git Graph；每個 Session 各自顯示自己的專案，互不干擾。安裝時可選擇是否一併安裝（預設不安裝）。  
+  *Type `/git-graph` in Claude Desktop to open the current project's Git Graph beside the chat; each session shows its own project. Optional at install time (off by default).*
+
+* 🌐 **SSH 遠端開發 (Remote Development over SSH)**  
+  Claude 透過 SSH 連到遠端機器開發時同樣可用：遠端安裝本外掛，自己的 Windows 安裝 SSH 通道安裝檔（`ssh-tunnel-setup.exe`），通道會在背景自動連線與重連，可設定登入時自動啟動。  
+  *Works for Claude sessions connected to remote machines over SSH, with a background, auto-reconnecting SSH tunnel installed on your Windows PC.*
 
 * 🔔 **GitHub 新版偵測與一鍵熱更新 (Release Update Notification & One-Click Hot Update)**  
   面板開啟時與每 6 小時自動比對 GitHub 最新 Release 版本（後端記憶體快取提供 60 秒防頻繁冷卻保護，重新整理按鈕 `🔄` 僅更新本地 Git 狀態；點擊右上角版本標籤可手動檢查）；當有新版本發布時顯示 `⬆ vX.Y.Z` 提示按鈕，點擊即可自動下載更新包、校驗 `SHA256SUMS.txt`、覆蓋安裝並自動熱重啟面板，無須重開 AGY。  
