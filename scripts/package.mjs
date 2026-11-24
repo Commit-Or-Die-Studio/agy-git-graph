@@ -158,7 +158,7 @@ async function packagePlugin() {
           '/optimize+',
           `/out:${exeOut}`,
           `/resource:${zipPath},payload.zip`,
-          '/reference:System.dll,System.Windows.Forms.dll,System.IO.Compression.dll,System.IO.Compression.FileSystem.dll',
+          '/reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.IO.Compression.dll,System.IO.Compression.FileSystem.dll',
           installerSrc
         ]);
         console.log(`   ✔ 已生成 Windows 雙擊安裝檔: ${path.basename(exeOut)}`);
@@ -168,12 +168,32 @@ async function packagePlugin() {
           '/target:winexe',
           '/optimize+',
           `/out:${uninstExeOut}`,
-          '/reference:System.dll,System.Windows.Forms.dll,System.IO.Compression.dll,System.IO.Compression.FileSystem.dll',
+          '/reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.IO.Compression.dll,System.IO.Compression.FileSystem.dll',
           installerSrc
         ]);
         console.log(`   ✔ 已生成 Windows 雙擊解除安裝檔: ${path.basename(uninstExeOut)}`);
       } catch (err) {
         console.warn('   ❌ 編譯 Windows 執行檔失敗:', err.message);
+      }
+    }
+
+    // 獨立的 SSH 通道安裝檔：給「在這台 Windows 用 Claude 透過 SSH 連到遠端機器開發」的使用者，只安裝通道
+    const tunnelSrc = path.join(__dirname, 'tunnel-installer.cs');
+    const tunnelDir = path.join(ROOT_DIR, 'client', 'ssh-tunnel');
+    if (cscPath && fs.existsSync(tunnelSrc) && fs.existsSync(tunnelDir)) {
+      const tunnelRefs = '/reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll';
+      const tunnelResources = [
+        `/resource:${path.join(tunnelDir, 'git-graph-tunnel.ps1')},git-graph-tunnel.ps1`,
+        `/resource:${path.join(tunnelDir, 'run-hidden.vbs')},run-hidden.vbs`
+      ];
+      for (const kind of ['setup', 'uninstall']) {
+        const out = path.join(DIST_DIR, `${pluginName}-v${version}-ssh-tunnel-${kind}.exe`);
+        try {
+          await execFileAsync(cscPath, ['/target:winexe', '/optimize+', `/out:${out}`, ...tunnelResources, tunnelRefs, tunnelSrc]);
+          console.log(`   ✔ 已生成 Windows SSH 通道${kind === 'setup' ? '安裝' : '解除安裝'}檔: ${path.basename(out)}`);
+        } catch (err) {
+          console.warn('   ❌ 編譯 SSH 通道安裝檔失敗:', err.message);
+        }
       }
     }
   }
@@ -215,6 +235,51 @@ echo "  AGY Git Graph - Linux / macOS 自動安裝程式 (v${version})"
 echo "========================================================"
 echo ""
 
+# 安裝選項：AGY 固定安裝；Claude 桌面版 /git-graph 技能為選用（--claude / --no-claude，未指定時詢問，預設不安裝）
+INSTALL_CLAUDE=""
+for arg in "$@"; do
+  case "$arg" in
+    --claude) INSTALL_CLAUDE=1 ;;
+    --no-claude) INSTALL_CLAUDE=0 ;;
+  esac
+done
+
+CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SKILL_DEST="$CLAUDE_DIR/skills/git-graph/SKILL.md"
+CLAUDE_INSTALLED=0
+if [ -f "$SKILL_DEST" ] && grep -q "managed-by: agy-git-graph" "$SKILL_DEST"; then
+  CLAUDE_INSTALLED=1
+fi
+
+echo "安裝項目："
+echo "  [x] AGY Git Graph（必要，固定安裝）"
+if [ ! -d "$CLAUDE_DIR" ]; then
+  INSTALL_CLAUDE=0
+  echo "  [ ] Claude 桌面版 /git-graph 技能（未偵測到 Claude: $CLAUDE_DIR，略過）"
+elif [ -z "$INSTALL_CLAUDE" ]; then
+  if [ -t 0 ]; then
+    if [ "$CLAUDE_INSTALLED" = "1" ]; then
+      read -r -p "  是否保留 / 更新 Claude 桌面版 /git-graph 技能？(Y/n): " ans
+      case "$ans" in [Nn]*) INSTALL_CLAUDE=0 ;; *) INSTALL_CLAUDE=1 ;; esac
+    else
+      read -r -p "  是否同時安裝 Claude 桌面版 /git-graph 技能？(y/N): " ans
+      case "$ans" in [Yy]*) INSTALL_CLAUDE=1 ;; *) INSTALL_CLAUDE=0 ;; esac
+    fi
+  else
+    # 非互動執行：維持目前狀態（已安裝則更新，未安裝則不裝）
+    INSTALL_CLAUDE="$CLAUDE_INSTALLED"
+  fi
+fi
+echo ""
+
+# Claude 用的獨立伺服器（非 AGY 管理）若正在執行，安裝完成後以新版重新啟動，避免 Claude 窗格中斷
+RESTART_CLAUDE_SERVER=0
+if command -v node >/dev/null 2>&1; then
+  if node -e 'fetch("http://127.0.0.1:52899/api/health",{signal:AbortSignal.timeout(1500)}).then(r=>r.json()).then(j=>process.exit(j&&j.name==="agy-git-graph"&&j.agyManaged===false?0:1)).catch(()=>process.exit(1))' 2>/dev/null; then
+    RESTART_CLAUDE_SERVER=1
+  fi
+fi
+
 echo "[1/3] 正在終止可能執行的舊背景進程..."
 pkill -9 -f "server\.mjs" 2>/dev/null || true
 
@@ -226,16 +291,35 @@ base64 -d <<'EOF_PAYLOAD' | tar -xz -C "$HOME/.gemini/config/plugins/"
 ${base64Tar}
 EOF_PAYLOAD
 
-# 安裝 Claude 的 /git-graph 技能（僅在已安裝 Claude、且不覆寫使用者自己的同名技能）
-CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+# 依選擇安裝 / 移除 Claude 的 /git-graph 技能（不覆寫使用者自己建立的同名技能）
 SKILL_SRC="$TARGET_DIR/claude/skills/git-graph/SKILL.md"
-SKILL_DEST="$CLAUDE_DIR/skills/git-graph/SKILL.md"
-if [ -d "$CLAUDE_DIR" ] && [ -f "$SKILL_SRC" ]; then
+if [ "$INSTALL_CLAUDE" = "1" ] && [ -f "$SKILL_SRC" ]; then
   if [ ! -f "$SKILL_DEST" ] || grep -q "managed-by: agy-git-graph" "$SKILL_DEST"; then
     mkdir -p "$CLAUDE_DIR/skills/git-graph"
     cp "$SKILL_SRC" "$SKILL_DEST"
     echo "  Claude 桌面版: 已安裝 /git-graph 技能 ($SKILL_DEST)"
+    echo ""
+    echo "  若您是從其他電腦用 Claude 桌面版透過 SSH 連到這台機器開發："
+    echo "  請在「那台電腦」安裝 SSH 通道安裝檔（${pluginName}-v${version}-ssh-tunnel-setup.exe），"
+    echo "  讓 Claude 右側的 Git Graph 能連到這台機器上的伺服器："
+    echo "  https://github.com/Commit-Or-Die-Studio/agy-git-graph/releases/latest"
+  else
+    echo "  Claude 桌面版: 已有使用者自訂的 git-graph 技能，未覆寫"
   fi
+elif [ "$CLAUDE_INSTALLED" = "1" ]; then
+  rm -rf "$CLAUDE_DIR/skills/git-graph"
+  echo "  Claude 桌面版: 已移除 /git-graph 技能"
+fi
+
+# 安裝前正在執行的 Claude 獨立伺服器：以新版重新啟動（脫離此終端機，關閉終端機也不會停止）
+if [ "$RESTART_CLAUDE_SERVER" = "1" ]; then
+  SERVER_DIR="$TARGET_DIR/sidecars/git_graph_server"
+  if command -v setsid >/dev/null 2>&1; then
+    (cd "$SERVER_DIR" && env -u ANTIGRAVITY_SIDECAR_WEB_PORT -u PORT setsid nohup node server.mjs --port 52899 >/dev/null 2>&1 &)
+  else
+    (cd "$SERVER_DIR" && env -u ANTIGRAVITY_SIDECAR_WEB_PORT -u PORT nohup node server.mjs --port 52899 >/dev/null 2>&1 &)
+  fi
+  echo "  Claude 桌面版: Git Graph 伺服器已以新版重新啟動"
 fi
 
 echo ""
@@ -334,6 +418,8 @@ fi
     '| :--- | :--- | :--- |',
     `| **Windows (推薦)** | \`${pluginName}-v${version}-setup.exe\` | **Windows 一鍵安裝檔**：下載後雙擊即可自動安裝至 AGY 全域外掛目錄 |`,
     `| **Windows** | \`${pluginName}-v${version}-uninstall.exe\` | **Windows 解除安裝檔**：雙擊自動關閉背景程序並完整移除外掛 |`,
+    `| **Windows（SSH 遠端開發用）** | \`${pluginName}-v${version}-ssh-tunnel-setup.exe\` | **SSH 通道安裝檔**：在自己的 Windows 用 Claude 桌面版透過 SSH 連到遠端機器開發時使用；只安裝背景 SSH 通道，讓 Claude 右側的 Git Graph 連到遠端（遠端機器需安裝本外掛並啟用 Claude /git-graph） |`,
+    `| **Windows（SSH 遠端開發用）** | \`${pluginName}-v${version}-ssh-tunnel-uninstall.exe\` | **SSH 通道解除安裝檔**：停止通道並移除開機啟動、捷徑與設定 |`,
     `| **Linux / macOS (推薦)** | \`${pluginName}-v${version}-setup.sh\` | **自解壓安裝腳本**：執行 \`bash ${pluginName}-v${version}-setup.sh\` 一鍵完成安裝 |`,
     `| **Linux / macOS** | \`${pluginName}-v${version}-uninstall.sh\` | **解除安裝腳本**：執行 \`bash ${pluginName}-v${version}-uninstall.sh\` 乾淨移除 |`,
     `| **手動壓縮包 (ZIP)** | \`${pluginName}-v${version}.zip\` | 手動解壓縮至 \`~/.gemini/config/plugins/${pluginName}/\` |`,

@@ -479,6 +479,20 @@
       ]);
 
       if (!statusRes.ok || !statusRes.isGit) {
+        // 網址以 ?repo= 指定的倉庫無效：直接提示，不默默改顯示其他倉庫，避免誤以為看到的是指定專案
+        if (urlRepo && isSamePath(currentRepo, urlRepo)) {
+          const reason = statusRes.exists === false ? '找不到此資料夾' : '此資料夾不是 Git 倉庫';
+          branchBadgeEl.textContent = '無';
+          workingTreeStatusEl.innerHTML = `<span style="color:#f38ba8;">● ${escapeHtml(reason)}</span>`;
+          commitsCountEl.textContent = '0 commits';
+          commitList.innerHTML = '';
+          graphSvg.innerHTML = '';
+          loadingState.classList.add('hidden');
+          emptyState.classList.remove('hidden');
+          emptyState.innerHTML = `<p style="font-size:14px;color:#f38ba8;margin-bottom:6px;">⚠️ ${escapeHtml(reason)}</p><p style="font-size:12px;color:#a6adc8;word-break:break-all;">${escapeHtml(urlRepo)}</p><p style="font-size:12px;color:#6c7086;margin-top:6px;">請確認網址中的 repo 路徑，或改用左上角選單切換專案</p>`;
+          return false;
+        }
+
         // 如果當前 repo 不是 Git，但專案清單中有可用的 Git 專案，自動切換至該專案
         if (cachedProjectsData && cachedProjectsData.currentProject && cachedProjectsData.currentProject.isGit && !isSamePath(cachedProjectsData.currentProject.path, currentRepo)) {
           await switchRepo(cachedProjectsData.currentProject.path);
@@ -546,7 +560,11 @@
       return true;
     } catch (err) {
       console.error('Failed to load repo status:', err);
-      workingTreeStatusEl.textContent = '無法連線到本機 Sidecar Server';
+      if (isNetworkError(err)) {
+        handleServerDown();
+      } else {
+        workingTreeStatusEl.textContent = '無法連線到本機 Sidecar Server';
+      }
       return false;
     }
   }
@@ -943,6 +961,43 @@
   }
 
   // 顯示輕量通知 Toast
+  // 伺服器斷線（例如重新安裝、一鍵更新重啟中）：顯示提示並自動等待重新連線，伺服器回來即重新載入頁面
+  let serverDown = false;
+  function isNetworkError(err) {
+    return Boolean(err) && (err.name === 'TypeError' || /Failed to fetch|NetworkError|Load failed/i.test(String(err.message || err)));
+  }
+  async function pingServer() {
+    try {
+      const res = await fetch('/api/health', { cache: 'no-store' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+  async function handleServerDown() {
+    if (serverDown) return;
+    serverDown = true;
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    workingTreeStatusEl.innerHTML = '<span style="color:#f9e2af;">● Git Graph 伺服器重新啟動中，等待重新連線...</span>';
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      await sleep(2000);
+      if (await pingServer()) {
+        window.location.reload();
+        return;
+      }
+    }
+    workingTreeStatusEl.innerHTML = '<span style="color:#f38ba8;">● Git Graph 伺服器已停止：Claude 請重新執行 /git-graph，AGY 請重新開啟面板</span>';
+    // 持續低頻檢查：使用者重新啟動伺服器後頁面會自動恢復
+    while (true) {
+      await sleep(5000);
+      if (await pingServer()) {
+        window.location.reload();
+        return;
+      }
+    }
+  }
+
   // 等待伺服器重啟完成並回報指定版本（逾時則直接返回，由呼叫端照常重新載入）
   async function waitForServerVersion(version, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
@@ -1513,7 +1568,8 @@
         }
       }
     } catch (err) {
-      // 靜默處理
+      // 伺服器連不上時進入自動重連；其他錯誤靜默處理
+      if (isNetworkError(err)) handleServerDown();
     } finally {
       isCheckingState = false;
     }
@@ -1526,6 +1582,7 @@
 
   // 初始啟動
   (async () => {
+    fetch(apiUrl('/api/client-hello'), { cache: 'no-store' }).catch(() => {});
     updateProjectButtonText();
     loadingState.classList.remove('hidden');
     emptyState.classList.add('hidden');

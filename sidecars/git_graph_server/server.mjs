@@ -27,12 +27,19 @@ function getClaudeConfigDir() {
 // 本程序啟動時載入的程式版本（安裝檔案更新後，仍在執行的舊程序會回報舊版號，供啟動腳本判斷是否需重啟）
 const RUNNING_VERSION = getLocalVersion();
 
+// 頁面連線記錄：頁面開啟時呼叫 /api/client-hello，供 Claude 啟動腳本確認瀏覽器確實連上（例如經由 SSH 通道）
+const clientSeenAt = new Map(); // repoKey -> timestamp (ms)
+function repoKey(p) {
+  const resolved = path.resolve(String(p || ''));
+  return process.platform === 'win32' ? resolved.replace(/\\/g, '/').toLowerCase() : resolved;
+}
+
 const CLAUDE_SKILL_NAME = 'git-graph';
 const CLAUDE_SKILL_MARKER = 'managed-by: agy-git-graph';
 const CLAUDE_SKILL_SRC = path.join(PLUGIN_ROOT, 'claude', 'skills', CLAUDE_SKILL_NAME, 'SKILL.md');
 
-// 啟動時同步 Claude skill：讓舊版透過一鍵更新升級後，也能自動補裝 / 更新 Claude 端的 /git-graph。
-// 僅在已安裝 Claude（設定目錄存在）時寫入，且只覆寫帶有本外掛標記的檔案，不動使用者自己的同名 skill。
+// 啟動時同步 Claude skill：Claude 功能為安裝時可選（預設不裝），因此這裡只「更新」已安裝的 /git-graph，
+// 不會替未選擇安裝的使用者新裝；只覆寫帶有本外掛標記的檔案，不動使用者自己的同名 skill。
 function syncClaudeSkill() {
   try {
     if (fs.existsSync(path.join(PLUGIN_ROOT, '.git'))) return; // 開發用 Git 倉庫不自動寫入
@@ -42,12 +49,9 @@ function syncClaudeSkill() {
     const src = fs.readFileSync(CLAUDE_SKILL_SRC, 'utf8');
     const destDir = path.join(claudeDir, 'skills', CLAUDE_SKILL_NAME);
     const dest = path.join(destDir, 'SKILL.md');
-    if (fs.existsSync(dest)) {
-      const current = fs.readFileSync(dest, 'utf8');
-      if (current === src) return;
-      if (!current.includes(CLAUDE_SKILL_MARKER)) return;
-    }
-    fs.mkdirSync(destDir, { recursive: true });
+    if (!fs.existsSync(dest)) return; // 使用者未選擇安裝 Claude 功能
+    const current = fs.readFileSync(dest, 'utf8');
+    if (current === src || !current.includes(CLAUDE_SKILL_MARKER)) return;
     fs.writeFileSync(dest, src, 'utf8');
     console.log(`[Git Graph Sidecar] Claude skill synced: ${dest}`);
   } catch (err) {
@@ -712,6 +716,30 @@ const server = http.createServer(async (req, res) => {
   // 取得 query 參數中指定的 repo，若無則使用 currentRepoPath
   const queryRepo = reqUrl.searchParams.get('repo') || currentRepoPath;
 
+  // 頁面連線記錄：頁面發出的任何帶 repo 的 API 請求（含每 1.5 秒的狀態輪詢）都視為「該倉庫的頁面仍連著」，
+  // 因此伺服器重啟或啟動腳本開始等待之前就已開著的頁面，也能在數秒內被確認連上（不需重新整理）
+  if (pathname.startsWith('/api/') && pathname !== '/api/client-seen' && reqUrl.searchParams.get('repo')) {
+    const at = Date.now();
+    clientSeenAt.set(repoKey(reqUrl.searchParams.get('repo')), at);
+    clientSeenAt.set('*', at);
+  }
+
+  // API: 頁面回報已連線（不論倉庫是否有效，只要頁面成功打開就記錄）
+  if (pathname === '/api/client-hello') {
+    const at = Date.now();
+    if (queryRepo) clientSeenAt.set(repoKey(queryRepo), at);
+    clientSeenAt.set('*', at);
+    return sendJson(res, { ok: true, at });
+  }
+
+  // API: 查詢指定倉庫的頁面是否在 since (ms) 之後連線過
+  if (pathname === '/api/client-seen' && req.method === 'GET') {
+    const since = Number(reqUrl.searchParams.get('since')) || 0;
+    const key = reqUrl.searchParams.get('repo') ? repoKey(reqUrl.searchParams.get('repo')) : '*';
+    const at = clientSeenAt.get(key) || 0;
+    return sendJson(res, { ok: true, seen: at > since, at });
+  }
+
   // API: 取得 AGY 註冊專案清單與 Submodules (依當前工作區與 Session 分組)
   if (pathname === '/api/projects' && req.method === 'GET') {
     const allProjects = getAgyProjects();
@@ -819,11 +847,13 @@ const server = http.createServer(async (req, res) => {
     }
     const isGit = await runGit(['rev-parse', '--is-inside-work-tree'], queryRepo);
     if (!isGit.ok) {
+      const exists = fs.existsSync(queryRepo);
       return sendJson(res, {
         ok: true,
         isGit: false,
+        exists,
         repoPath: queryRepo,
-        error: '當前對話工作區無 Git 倉庫'
+        error: exists ? '此資料夾不是 Git 倉庫' : '找不到此資料夾'
       });
     }
 

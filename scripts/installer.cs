@@ -4,6 +4,8 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Windows.Forms;
 using System.Diagnostics;
+using System.Drawing;
+using System.Net;
 
 namespace AgyGitGraphInstaller
 {
@@ -17,6 +19,7 @@ namespace AgyGitGraphInstaller
 
             bool isUninstall = false;
             bool isSilent = false;
+            bool argClaude = false;
             string exeName = Path.GetFileNameWithoutExtension(AppDomain.CurrentDomain.FriendlyName);
             if (exeName.IndexOf("uninstall", StringComparison.OrdinalIgnoreCase) >= 0)
             {
@@ -31,6 +34,9 @@ namespace AgyGitGraphInstaller
                         arg.Equals("-u", StringComparison.OrdinalIgnoreCase) ||
                         arg.Equals("--uninstall", StringComparison.OrdinalIgnoreCase))
                         isUninstall = true;
+                    if (arg.Equals("/claude", StringComparison.OrdinalIgnoreCase) ||
+                        arg.Equals("--claude", StringComparison.OrdinalIgnoreCase))
+                        argClaude = true;
                     if (arg.Equals("/s", StringComparison.OrdinalIgnoreCase) || 
                         arg.Equals("/quiet", StringComparison.OrdinalIgnoreCase) ||
                         arg.Equals("-y", StringComparison.OrdinalIgnoreCase))
@@ -77,9 +83,22 @@ namespace AgyGitGraphInstaller
                 return;
             }
 
+            // 安裝選項：AGY 固定安裝；Claude 功能為選用（新安裝預設不勾，已安裝過則維持目前狀態）
+            string claudeDir = GetClaudeConfigDir(userProfile);
+            bool claudeAvailable = Directory.Exists(claudeDir);
+            bool claudeInstalled = IsClaudeSkillInstalled(userProfile);
+            // 靜默安裝：未指定 /claude 時沿用目前狀態（已安裝則保留更新，不會被移除）
+            bool wantClaude = argClaude || (isSilent && claudeInstalled);
+            if (!isSilent)
+            {
+                if (!ShowInstallOptions(targetDir, claudeDir, claudeAvailable, claudeInstalled, out wantClaude)) return;
+            }
+
             // 安裝流程
             try
             {
+                // Claude 用的獨立伺服器（非 AGY 管理）若正在執行，安裝完成後以新版重新啟動，避免 Claude 窗格中斷
+                bool restartClaudeServer = IsStandaloneServerRunning();
                 KillRunningSidecars();
 
                 if (!Directory.Exists(targetDir))
@@ -128,10 +147,24 @@ namespace AgyGitGraphInstaller
                     }
                 }
 
-                string claudeSkillPath = InstallClaudeSkill(userProfile, targetDir);
-                string claudeHint = string.IsNullOrEmpty(claudeSkillPath)
-                    ? ""
-                    : "Claude 桌面版: 已安裝 /git-graph 技能\n" + claudeSkillPath + "\n\n";
+                string claudeHint = "";
+                if (wantClaude)
+                {
+                    string claudeSkillPath = InstallClaudeSkill(userProfile, targetDir);
+                    claudeHint = string.IsNullOrEmpty(claudeSkillPath)
+                        ? "Claude 桌面版: 未偵測到 Claude，未安裝 /git-graph 技能\n\n"
+                        : "Claude 桌面版: 已安裝 /git-graph 技能\n" + claudeSkillPath + "\n\n";
+                }
+                else if (claudeInstalled)
+                {
+                    RemoveClaudeSkill(userProfile);
+                    claudeHint = "Claude 桌面版: 已移除 /git-graph 技能\n\n";
+                }
+
+                if (restartClaudeServer && StartStandaloneServer(targetDir))
+                {
+                    claudeHint += "Claude 桌面版: Git Graph 伺服器已以新版重新啟動\n\n";
+                }
 
                 if (!isSilent)
                 {
@@ -191,6 +224,155 @@ namespace AgyGitGraphInstaller
             catch
             {
                 return "";
+            }
+        }
+
+        const int ClaudeServerPort = 52899;
+
+        // 檢查 Claude 用的獨立 Git Graph 伺服器是否正在執行（/api/health 回報 agyManaged:false）
+        static bool IsStandaloneServerRunning()
+        {
+            try
+            {
+                HttpWebRequest req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + ClaudeServerPort + "/api/health");
+                req.Timeout = 1500;
+                req.Proxy = null;
+                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                using (StreamReader reader = new StreamReader(resp.GetResponseStream()))
+                {
+                    string body = reader.ReadToEnd();
+                    return body.IndexOf("\"name\":\"agy-git-graph\"", StringComparison.Ordinal) >= 0 &&
+                           body.IndexOf("\"agyManaged\":false", StringComparison.Ordinal) >= 0;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // 以隱藏視窗啟動新版獨立伺服器（安裝程式結束後仍持續執行）；找不到 node 時略過
+        static bool StartStandaloneServer(string pluginDir)
+        {
+            try
+            {
+                string serverDir = Path.Combine(pluginDir, "sidecars", "git_graph_server");
+                string serverPath = Path.Combine(serverDir, "server.mjs");
+                if (!File.Exists(serverPath)) return false;
+
+                ProcessStartInfo psi = new ProcessStartInfo("node", "\"" + serverPath + "\" --port " + ClaudeServerPort);
+                psi.WorkingDirectory = serverDir;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                if (psi.EnvironmentVariables.ContainsKey("ANTIGRAVITY_SIDECAR_WEB_PORT")) psi.EnvironmentVariables.Remove("ANTIGRAVITY_SIDECAR_WEB_PORT");
+                if (psi.EnvironmentVariables.ContainsKey("PORT")) psi.EnvironmentVariables.Remove("PORT");
+                Process.Start(psi);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        static bool IsClaudeSkillInstalled(string userProfile)
+        {
+            try
+            {
+                string dest = Path.Combine(GetClaudeConfigDir(userProfile), "skills", "git-graph", "SKILL.md");
+                return File.Exists(dest) && File.ReadAllText(dest).IndexOf(ClaudeSkillMarker, StringComparison.Ordinal) >= 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // 安裝選項視窗：回傳 false 表示使用者取消
+        static bool ShowInstallOptions(string targetDir, string claudeDir, bool claudeAvailable, bool claudeInstalled, out bool wantClaude)
+        {
+            wantClaude = false;
+            using (Form form = new Form())
+            {
+                form.Text = "AGY Git Graph 安裝";
+                form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                form.MaximizeBox = false;
+                form.MinimizeBox = false;
+                form.StartPosition = FormStartPosition.CenterScreen;
+                form.AutoScaleMode = AutoScaleMode.Font;
+                form.Font = SystemFonts.MessageBoxFont;
+                form.AutoSize = true;
+                form.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+                form.Padding = new Padding(14);
+
+                FlowLayoutPanel panel = new FlowLayoutPanel();
+                panel.FlowDirection = FlowDirection.TopDown;
+                panel.AutoSize = true;
+                panel.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+                panel.WrapContents = false;
+
+                Label title = new Label();
+                title.Text = "請選擇要安裝的項目：";
+                title.AutoSize = true;
+                title.Margin = new Padding(0, 0, 0, 10);
+                panel.Controls.Add(title);
+
+                CheckBox agyBox = new CheckBox();
+                agyBox.Text = "AGY Git Graph（必要，固定安裝）";
+                agyBox.Checked = true;
+                agyBox.Enabled = false;
+                agyBox.AutoSize = true;
+                panel.Controls.Add(agyBox);
+
+                Label agyNote = new Label();
+                agyNote.Text = targetDir;
+                agyNote.ForeColor = SystemColors.GrayText;
+                agyNote.AutoSize = true;
+                agyNote.Margin = new Padding(20, 0, 0, 10);
+                panel.Controls.Add(agyNote);
+
+                CheckBox claudeBox = new CheckBox();
+                claudeBox.Text = "Claude 桌面版 /git-graph 技能（選用）";
+                claudeBox.Checked = claudeAvailable && claudeInstalled;
+                claudeBox.Enabled = claudeAvailable;
+                claudeBox.AutoSize = true;
+                panel.Controls.Add(claudeBox);
+
+                Label claudeNote = new Label();
+                claudeNote.Text = claudeAvailable
+                    ? "在 Claude 桌面版輸入 /git-graph，於右側開啟目前專案的 Git Graph\n安裝至 " + Path.Combine(claudeDir, "skills", "git-graph")
+                    : "未偵測到 Claude（" + claudeDir + "），無法安裝";
+                claudeNote.ForeColor = SystemColors.GrayText;
+                claudeNote.AutoSize = true;
+                claudeNote.Margin = new Padding(20, 0, 0, 14);
+                panel.Controls.Add(claudeNote);
+
+                FlowLayoutPanel buttons = new FlowLayoutPanel();
+                buttons.FlowDirection = FlowDirection.RightToLeft;
+                buttons.AutoSize = true;
+                buttons.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+                buttons.Anchor = AnchorStyles.Right;
+
+                Button cancel = new Button();
+                cancel.Text = "取消";
+                cancel.DialogResult = DialogResult.Cancel;
+                cancel.AutoSize = true;
+                Button ok = new Button();
+                ok.Text = "安裝";
+                ok.DialogResult = DialogResult.OK;
+                ok.AutoSize = true;
+                buttons.Controls.Add(cancel);
+                buttons.Controls.Add(ok);
+                panel.Controls.Add(buttons);
+
+                form.Controls.Add(panel);
+                form.AcceptButton = ok;
+                form.CancelButton = cancel;
+
+                if (form.ShowDialog() != DialogResult.OK) return false;
+                wantClaude = claudeBox.Enabled && claudeBox.Checked;
+                return true;
             }
         }
 

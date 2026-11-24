@@ -55,7 +55,6 @@ agy-git-graph/
 ├── plugin.json                 # AGY Plugin Manifest 清單設定檔
 ├── package.json                # 專案資訊與打包腳本配置
 ├── AGENTS.md                   # AI 代理人開發、文件同步與發布規範
-├── TODO.md                     # 待辦事項與 v2.0.0 跨平台規劃
 ├── LICENSE                     # MIT License
 ├── .claude/
 │   └── launch.json             # 開發用：在 Claude 瀏覽器窗格預覽工作區版本（埠 52897）
@@ -72,9 +71,12 @@ agy-git-graph/
 │           └── app.js          # SVG 繪圖、狀態管理與互動邏輯
 ├── scripts/
 │   ├── package.mjs             # 跨平台發行打包腳本 (支援 --next 預覽打包與自動生成 Release Notes)
-│   └── installer.cs            # Windows 原生自解壓安裝/解除安裝器 C# 原始碼
+│   ├── installer.cs            # Windows 原生自解壓安裝/解除安裝器 C# 原始碼
+│   └── tunnel-installer.cs     # Windows SSH 通道安裝/解除安裝器 C# 原始碼
 ├── claude/
 │   └── skills/git-graph/SKILL.md # Claude 桌面版 /git-graph 技能（由安裝檔與伺服器同步至 ~/.claude/skills）
+├── client/
+│   └── ssh-tunnel/             # Windows 用戶端背景 SSH 通道（git-graph-tunnel.ps1、隱藏啟動器 run-hidden.vbs），打包成獨立的 ssh-tunnel-setup.exe
 ├── skills/
 │   ├── local-package/SKILL.md  # 本機下一版本測試打包技能
 │   └── release/SKILL.md        # 正式壓版與 GitHub Release 自動發布技能
@@ -89,9 +91,11 @@ agy-git-graph/
 
 | 平台 | 檔案名稱 | 用途說明 |
 | :--- | :--- | :--- |
-| **Windows** | `agy-git-graph-v<VERSION>-setup.exe` | **Windows 一鍵安裝檔**：雙擊即可自動部署至 `~/.gemini/config/plugins/agy-git-graph/` |
+| **Windows** | `agy-git-graph-v<VERSION>-setup.exe` | **Windows 一鍵安裝檔**：雙擊開啟安裝選項（AGY 固定安裝，Claude `/git-graph` 技能選用、預設不勾），部署至 `~/.gemini/config/plugins/agy-git-graph/`；靜默安裝 `/s`，加 `/claude` 一併安裝 Claude 技能 |
 | **Windows** | `agy-git-graph-v<VERSION>-uninstall.exe` | **Windows 解除安裝檔**：雙擊自動關閉背景程序並完整移除外掛 |
-| **Linux / macOS** | `agy-git-graph-v<VERSION>-setup.sh` | **Linux / macOS 自解壓安裝腳本**：執行 `bash agy-git-graph-v<VERSION>-setup.sh` 自動完成安裝 |
+| **Windows（SSH 遠端開發用）** | `agy-git-graph-v<VERSION>-ssh-tunnel-setup.exe` | **SSH 通道安裝檔**：在自己的 Windows 用 Claude 桌面版透過 SSH 連到遠端機器開發時安裝；只安裝背景 SSH 通道（見下方「SSH 通道安裝檔」） |
+| **Windows（SSH 遠端開發用）** | `agy-git-graph-v<VERSION>-ssh-tunnel-uninstall.exe` | **SSH 通道解除安裝檔** |
+| **Linux / macOS** | `agy-git-graph-v<VERSION>-setup.sh` | **Linux / macOS 自解壓安裝腳本**：執行 `bash agy-git-graph-v<VERSION>-setup.sh`，會詢問是否一併安裝 Claude `/git-graph` 技能（預設不安裝）；可用 `--claude` / `--no-claude` 直接指定 |
 | **Linux / macOS** | `agy-git-graph-v<VERSION>-uninstall.sh` | **Linux / macOS 解除安裝腳本**：執行 `bash agy-git-graph-v<VERSION>-uninstall.sh` 乾淨移除 |
 | **跨平台手動包** | `agy-git-graph-v<VERSION>.zip` / `.tar.gz` | 手動解壓縮至 `~/.gemini/config/plugins/agy-git-graph/` |
 
@@ -100,9 +104,12 @@ agy-git-graph/
 ### 在 Claude 桌面版使用（`/git-graph`）
 Git Graph 的畫面本身是一個本機網頁，可直接在 **Claude 桌面版 Code 分頁內建的瀏覽器窗格**開啟，畫面與功能和 AGY 完全一致，不需另外切換視窗。
 
-**安裝**：同一個安裝檔會一併處理 Claude，不需另外設定：
-* `setup.exe` / `setup.sh` 偵測到已安裝 Claude（存在 `~/.claude`，或 `CLAUDE_CONFIG_DIR` 指定的目錄）時，會把 `/git-graph` 技能安裝到 `~/.claude/skills/git-graph/`。
-* 從舊版本以 AGY 面板的一鍵更新升級時，新版伺服器啟動後也會自動補裝 / 更新此技能。
+**安裝**：Claude 功能為**選用**，由同一個安裝檔處理：
+* AGY Git Graph 一律安裝（不可取消）；Claude 桌面版 `/git-graph` 技能為選項，**新安裝預設不勾選**，已安裝過則預設維持目前狀態（取消勾選即移除）。
+* `setup.exe`：安裝視窗中勾選「Claude 桌面版 /git-graph 技能」；靜默安裝 `/s` 時加上 `/claude` 才會安裝。
+* `setup.sh`：執行時詢問 `(y/N)`；或以 `--claude` / `--no-claude` 指定；非互動執行時維持目前狀態。
+* 需已安裝 Claude（存在 `~/.claude`，或 `CLAUDE_CONFIG_DIR` 指定的目錄），技能會安裝到其中的 `skills/git-graph/`；未偵測到 Claude 時此選項不可選。
+* 已安裝此技能者，之後透過 AGY 面板一鍵更新時，新版伺服器啟動會自動同步技能內容；**未選擇安裝者不會被自動安裝**。
 * 只會覆寫帶有本外掛標記的技能檔，不會動到使用者自己建立的同名技能；解除安裝時一併移除。
 
 **使用**：在任何專案的 Claude Session 中輸入 `/git-graph`（或直接要求「開 Git Graph」），右側瀏覽器窗格就會開啟該 Session 專案的 Git Graph。
@@ -112,7 +119,33 @@ Git Graph 的畫面本身是一個本機網頁，可直接在 **Claude 桌面版
 * **每個 Session 各自獨立**：與 AGY 相同，後端伺服器共用一個，每個 Session 的畫面各自以 `?repo=` 指定自己的倉庫；關閉任何一個 Session 都不會中斷其他 Session。
 * **與 AGY 互不影響**：AGY 的 Sidecar 由 AGY 自己管理（不同埠號、不同程序），兩邊使用同一份已安裝的程式碼，但各自啟動、各自關閉。
 * **一鍵更新自動重啟**：在 Claude 窗格中按版本更新時，獨立模式的伺服器會先釋放埠號，再自行啟動新版並結束舊程序；頁面會等新版伺服器回應後才重新載入。AGY 模式則照舊交由 AGY 重新拉起。
+* **重新安裝自動恢復**：執行 `setup.exe` / `setup.sh` 時，若 Claude 用的伺服器正在執行，安裝完成後會以新版重新啟動；已開啟的 Git Graph 頁面偵測到伺服器暫時中斷會顯示「伺服器重新啟動中」並自動重新連線，不需重新執行 `/git-graph`（約 30 秒仍未恢復時才提示手動重新執行）。
 * 需要電腦上已安裝 Node.js；網址未帶 `?repo=` 時維持原本行為（沿用上次選擇的倉庫，或依 AGY 對話自動偵測）。
+* 網址以 `?repo=` 指定的路徑不存在或不是 Git 倉庫時，頁面會直接顯示「找不到此資料夾 / 此資料夾不是 Git 倉庫」，不會改顯示其他倉庫。
+
+#### 透過 SSH 連線的 Session（遠端機器）
+Claude 桌面版以 SSH 連到遠端機器時，Git Graph 伺服器跑在**遠端**，瀏覽器窗格卻在**本機**，本機的 `localhost` 連不到遠端，因此需要一條 SSH 通道。`/git-graph` 會自動偵測並引導：
+
+1. **第一次在某台遠端機器使用**：請使用者填寫連線設定（SSH 目標、SSH 埠、本機通道埠），並附上從 `SSH_CONNECTION` 偵測到的值供參考，填寫後記錄下來。
+2. 提供要在本機瀏覽器窗格開啟的網址，例如 `http://localhost:52898/?repo=<遠端專案資料夾>`。
+3. **自動確認是否連上**：頁面開啟時會向伺服器回報（`/api/client-hello`），技能據此判斷通道是否正確；連上才算完成。連不上時才引導使用者在**本機**啟動通道（見下方「SSH 通道安裝檔」；其他系統則提供 `ssh -N -L 52898:127.0.0.1:52899 <使用者>@<遠端主機>` 指令），並視需要調整設定、更新記錄。
+
+* 通道設定**依遠端機器記錄**（遠端的 `~/.config/agy-git-graph/ssh-tunnels.json`，以「伺服器 IP + SSH 埠」區分），同一台機器上的所有專案、所有 Session 共用，之後不需再設定；只有連線失敗時才會再次詢問。
+* 一條通道即可服務該機器上的所有專案（各自以 `?repo=` 區分）。
+* 伺服器只監聽 `127.0.0.1`，不對外開放；透過 SSH 通道存取是唯一的遠端方式。
+
+#### SSH 通道安裝檔（Windows 用戶端，`ssh-tunnel-setup.exe`）
+SSH Session 裡的 Claude 在遠端機器上執行，碰不到使用者的電腦，因此通道必須由**使用者自己的電腦**建立。這與在遠端機器上安裝本外掛是兩件事，所以提供一個**獨立的安裝檔**，只安裝通道（不安裝 AGY 外掛與 Claude 技能）：
+
+* **誰需要**：在自己的 Windows 用 Claude 桌面版、透過 SSH 連到遠端機器開發，且遠端機器已安裝本外掛並啟用 Claude `/git-graph` 的人。在遠端機器執行 `setup.sh` 安裝 Claude 技能後，也會提醒到 Releases 下載此檔。
+* **安裝時設定**：填寫遠端機器（SSH 目標、SSH 埠、本機埠）；安裝程式會先檢查本機埠是否已被其他程式占用，並以金鑰試連，成功才儲存。可選擇「登入 Windows 時自動啟動」，勾選時會說明原因與風險並請使用者確認。
+* **背景運作**：安裝至 `%LOCALAPPDATA%\agy-git-graph\ssh-tunnel\`，以完全隱藏的方式在背景執行 `ssh -N -L 127.0.0.1:<本機埠>:127.0.0.1:52899`，斷線自動重連（5 秒起、每次加倍、最多 60 秒）；只用金鑰登入（`BatchMode`），不詢問、不儲存密碼；可設定多台機器（各用不同本機埠）。
+* **更新不再詢問**：安裝前會先讀取目前狀態；已設定過則沿用機器清單與自動啟動設定，不再詢問也不再顯示風險說明（勾選「修改遠端機器設定」才會變更）。安裝期間若通道正在執行，會先停止、裝完以新版自動重新啟動。
+* **未設定自動啟動時**：安裝完成會提醒——在 Claude 的 SSH 工作階段使用 `/git-graph` 前，請先從開始功能表執行「**Git Graph SSH 通道**」。
+* **風險說明**：常駐一條使用既有金鑰的 SSH 連線；本機會開一個只接受本機連線的埠（`127.0.0.1`），同一台電腦上的其他程式或使用者也能經由它讀取遠端 Git Graph 內容並觸發 fetch / 更新；遠端無法連線時會在背景定期重試；金鑰失效或主機金鑰變更時需重新設定。
+* 設定與紀錄位於 `%APPDATA%\agy-git-graph\`（`ssh-tunnels.json`、`tunnel.log`）；`ssh-tunnel-uninstall.exe` 會停止並移除通道、開機排程、捷徑與設定。
+* 手動操作：`git-graph-tunnel.ps1 -Status`、`-Start`、`-Stop`、`-Add <使用者@主機> [-Port 22] [-LocalPort 52898]`、`-Remove <使用者@主機>`、`-EnableAutostart`、`-DisableAutostart`。
+* 靜默安裝：`ssh-tunnel-setup.exe /s /tunnel <使用者@主機> [/port 22] [/local-port 52898] [/autostart]`；未指定 `/tunnel` 時沿用現有設定、只更新程式。
 
 ---
 
