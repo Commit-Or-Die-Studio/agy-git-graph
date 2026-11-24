@@ -943,6 +943,20 @@
   }
 
   // 顯示輕量通知 Toast
+  // 等待伺服器重啟完成並回報指定版本（逾時則直接返回，由呼叫端照常重新載入）
+  async function waitForServerVersion(version, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    await new Promise(r => setTimeout(r, 600));
+    while (Date.now() < deadline) {
+      try {
+        const health = await fetch('/api/health', { cache: 'no-store' }).then(r => r.json());
+        if (health && health.ok && (!version || health.version === version)) return true;
+      } catch {}
+      await new Promise(r => setTimeout(r, 500));
+    }
+    return false;
+  }
+
   function showToast(msg) {
     let toast = $('app-toast');
     if (!toast) {
@@ -1182,9 +1196,11 @@
         if (res && res.ok) {
           btnUpdatePlugin.textContent = `✔ v${res.updatedTo}`;
           showToast(`🎉 已更新至 v${res.updatedTo}，正在重新載入...`);
-          setTimeout(() => {
-            window.location.reload();
-          }, 1200);
+          // 伺服器重啟中（AGY 拉起或獨立模式自行重啟）：等新版伺服器回應後再重新載入，避免顯示連線失敗
+          if (res.restarting) {
+            await waitForServerVersion(res.updatedTo, 20000);
+          }
+          window.location.reload();
         } else {
           throw new Error((res && res.error) || '更新失敗');
         }

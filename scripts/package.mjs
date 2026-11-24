@@ -96,7 +96,7 @@ async function packagePlugin() {
     }
   }
 
-  const rootDirs = ['assets', 'sidecars'];
+  const rootDirs = ['assets', 'sidecars', 'claude'];
   for (const dir of rootDirs) {
     const src = path.join(ROOT_DIR, dir);
     if (fs.existsSync(src)) {
@@ -202,6 +202,11 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
   else
     echo "未發現已安裝的外掛目錄。"
   fi
+  CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  if [ -f "$CLAUDE_DIR/skills/git-graph/SKILL.md" ] && grep -q "managed-by: agy-git-graph" "$CLAUDE_DIR/skills/git-graph/SKILL.md"; then
+    rm -rf "$CLAUDE_DIR/skills/git-graph"
+    echo "已移除 Claude 的 /git-graph 技能。"
+  fi
   exit 0
 fi
 
@@ -220,6 +225,18 @@ echo "[3/3] 正在從安裝檔自我解壓安裝核心檔案..."
 base64 -d <<'EOF_PAYLOAD' | tar -xz -C "$HOME/.gemini/config/plugins/"
 ${base64Tar}
 EOF_PAYLOAD
+
+# 安裝 Claude 的 /git-graph 技能（僅在已安裝 Claude、且不覆寫使用者自己的同名技能）
+CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SKILL_SRC="$TARGET_DIR/claude/skills/git-graph/SKILL.md"
+SKILL_DEST="$CLAUDE_DIR/skills/git-graph/SKILL.md"
+if [ -d "$CLAUDE_DIR" ] && [ -f "$SKILL_SRC" ]; then
+  if [ ! -f "$SKILL_DEST" ] || grep -q "managed-by: agy-git-graph" "$SKILL_DEST"; then
+    mkdir -p "$CLAUDE_DIR/skills/git-graph"
+    cp "$SKILL_SRC" "$SKILL_DEST"
+    echo "  Claude 桌面版: 已安裝 /git-graph 技能 ($SKILL_DEST)"
+  fi
+fi
 
 echo ""
 echo "========================================================"
@@ -258,6 +275,12 @@ if [ -d "$TARGET_DIR" ]; then
   echo "🎉 AGY Git Graph 已成功解除安裝！"
 else
   echo "未發現已安裝的外掛目錄 ($TARGET_DIR)。"
+fi
+
+CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+if [ -f "$CLAUDE_DIR/skills/git-graph/SKILL.md" ] && grep -q "managed-by: agy-git-graph" "$CLAUDE_DIR/skills/git-graph/SKILL.md"; then
+  rm -rf "$CLAUDE_DIR/skills/git-graph"
+  echo "已移除 Claude 的 /git-graph 技能。"
 fi
 `;
     fs.writeFileSync(linuxUninstPath, linuxUninstScript, 'utf8');

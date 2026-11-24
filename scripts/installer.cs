@@ -61,6 +61,7 @@ namespace AgyGitGraphInstaller
                     {
                         Directory.Delete(targetDir, true);
                     }
+                    RemoveClaudeSkill(userProfile);
                     if (!isSilent)
                     {
                         MessageBox.Show("AGY Git Graph 已成功解除安裝！\n請重新啟動 Antigravity 應用程式以套用變更。", "解除安裝成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -127,11 +128,17 @@ namespace AgyGitGraphInstaller
                     }
                 }
 
+                string claudeSkillPath = InstallClaudeSkill(userProfile, targetDir);
+                string claudeHint = string.IsNullOrEmpty(claudeSkillPath)
+                    ? ""
+                    : "Claude 桌面版: 已安裝 /git-graph 技能\n" + claudeSkillPath + "\n\n";
+
                 if (!isSilent)
                 {
                     DialogResult res = MessageBox.Show(
                         "🎉 AGY Git Graph 外掛已成功安裝！\n\n" +
                         "安裝目錄:\n" + targetDir + "\n\n" +
+                        claudeHint +
                         "請重新開啟 Antigravity 應用程式，即可於右側輔助面板使用。\n\n" +
                         "是否要在檔案總管開啟安裝目錄？",
                         "AGY Git Graph 安裝成功",
@@ -152,6 +159,53 @@ namespace AgyGitGraphInstaller
                     MessageBox.Show("安裝過程中發生錯誤:\n" + ex.Message, "安裝失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
+        }
+
+        // Claude Code 設定目錄（尊重 CLAUDE_CONFIG_DIR）
+        static string GetClaudeConfigDir(string userProfile)
+        {
+            string custom = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+            return string.IsNullOrEmpty(custom) ? Path.Combine(userProfile, ".claude") : custom;
+        }
+
+        const string ClaudeSkillMarker = "managed-by: agy-git-graph";
+
+        // 安裝 Claude 的 /git-graph 技能：僅在已安裝 Claude（設定目錄存在）時寫入，
+        // 不覆寫使用者自己建立、未帶本外掛標記的同名技能。回傳寫入路徑，未寫入則回傳空字串。
+        static string InstallClaudeSkill(string userProfile, string pluginDir)
+        {
+            try
+            {
+                string claudeDir = GetClaudeConfigDir(userProfile);
+                string src = Path.Combine(pluginDir, "claude", "skills", "git-graph", "SKILL.md");
+                if (!Directory.Exists(claudeDir) || !File.Exists(src)) return "";
+
+                string destDir = Path.Combine(claudeDir, "skills", "git-graph");
+                string dest = Path.Combine(destDir, "SKILL.md");
+                if (File.Exists(dest) && File.ReadAllText(dest).IndexOf(ClaudeSkillMarker, StringComparison.Ordinal) < 0) return "";
+
+                Directory.CreateDirectory(destDir);
+                File.Copy(src, dest, true);
+                return dest;
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        static void RemoveClaudeSkill(string userProfile)
+        {
+            try
+            {
+                string destDir = Path.Combine(GetClaudeConfigDir(userProfile), "skills", "git-graph");
+                string dest = Path.Combine(destDir, "SKILL.md");
+                if (File.Exists(dest) && File.ReadAllText(dest).IndexOf(ClaudeSkillMarker, StringComparison.Ordinal) >= 0)
+                {
+                    Directory.Delete(destDir, true);
+                }
+            }
+            catch {}
         }
 
         static void KillRunningSidecars()

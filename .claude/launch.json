@@ -4,8 +4,8 @@
     {
       "name": "git-graph",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["sidecars/git_graph_server/server.mjs", "--port", "52899"],
-      "port": 52899
+      "runtimeArgs": ["sidecars/git_graph_server/server.mjs", "--port", "52897"],
+      "port": 52897
     }
   ]
 }

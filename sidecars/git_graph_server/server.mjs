@@ -1,6 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -13,6 +13,47 @@ const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..');
 const GITHUB_RELEASE_API = 'https://api.github.com/repos/Commit-Or-Die-Studio/agy-git-graph/releases/latest';
+
+// 是否由 AGY Sidecar 管理：AGY 以 sidecar_sdk loader 啟動並負責重新拉起（restart_policy: always）。
+// 否則為獨立模式（例如 Claude 桌面版的 git-graph skill 啟動），需自行重啟。
+const IS_AGY_MANAGED = Boolean(process.env.ANTIGRAVITY_SIDECAR_WEB_PORT) ||
+  process.execArgv.some(arg => arg.includes('sidecar_sdk'));
+
+// Claude Code 設定目錄（尊重 CLAUDE_CONFIG_DIR），用於同步 git-graph skill
+function getClaudeConfigDir() {
+  return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+}
+
+// 本程序啟動時載入的程式版本（安裝檔案更新後，仍在執行的舊程序會回報舊版號，供啟動腳本判斷是否需重啟）
+const RUNNING_VERSION = getLocalVersion();
+
+const CLAUDE_SKILL_NAME = 'git-graph';
+const CLAUDE_SKILL_MARKER = 'managed-by: agy-git-graph';
+const CLAUDE_SKILL_SRC = path.join(PLUGIN_ROOT, 'claude', 'skills', CLAUDE_SKILL_NAME, 'SKILL.md');
+
+// 啟動時同步 Claude skill：讓舊版透過一鍵更新升級後，也能自動補裝 / 更新 Claude 端的 /git-graph。
+// 僅在已安裝 Claude（設定目錄存在）時寫入，且只覆寫帶有本外掛標記的檔案，不動使用者自己的同名 skill。
+function syncClaudeSkill() {
+  try {
+    if (fs.existsSync(path.join(PLUGIN_ROOT, '.git'))) return; // 開發用 Git 倉庫不自動寫入
+    const claudeDir = getClaudeConfigDir();
+    if (!fs.existsSync(claudeDir) || !fs.existsSync(CLAUDE_SKILL_SRC)) return;
+
+    const src = fs.readFileSync(CLAUDE_SKILL_SRC, 'utf8');
+    const destDir = path.join(claudeDir, 'skills', CLAUDE_SKILL_NAME);
+    const dest = path.join(destDir, 'SKILL.md');
+    if (fs.existsSync(dest)) {
+      const current = fs.readFileSync(dest, 'utf8');
+      if (current === src) return;
+      if (!current.includes(CLAUDE_SKILL_MARKER)) return;
+    }
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.writeFileSync(dest, src, 'utf8');
+    console.log(`[Git Graph Sidecar] Claude skill synced: ${dest}`);
+  } catch (err) {
+    console.warn('[Git Graph Sidecar] Claude skill sync skipped:', err.message);
+  }
+}
 
 // 讀取本地外掛版本號
 function getLocalVersion() {
@@ -177,7 +218,8 @@ function getSubmodules(repoPath, depth = 0) {
       cwd: repoPath,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'ignore'],
-      timeout: 3000
+      timeout: 3000,
+      windowsHide: true
     });
     if (gitSubStatus) {
       const lines = gitSubStatus.split(/\r?\n/);
@@ -230,7 +272,8 @@ function getSubmodules(repoPath, depth = 0) {
       cwd: repoPath,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'ignore'],
-      timeout: 3000
+      timeout: 3000,
+      windowsHide: true
     });
     if (lsFilesOut) {
       const lines = lsFilesOut.split(/\r?\n/);
@@ -1134,6 +1177,19 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
     return sendJson(res, { ok: fetchRes.ok, error: fetchRes.error });
   }
 
+  // API: 健康檢查（供 Claude 啟動腳本判斷伺服器是否已在執行、版本是否一致）
+  if (pathname === '/api/health' && req.method === 'GET') {
+    return sendJson(res, {
+      ok: true,
+      name: 'agy-git-graph',
+      version: RUNNING_VERSION,
+      installedVersion: getLocalVersion(),
+      pid: process.pid,
+      agyManaged: IS_AGY_MANAGED,
+      pluginRoot: PLUGIN_ROOT
+    });
+  }
+
   // API: 檢查 GitHub 是否有新版本 Release
   if (pathname === '/api/update-check' && req.method === 'GET') {
     const currentVersion = getLocalVersion();
@@ -1214,8 +1270,10 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-git-graph-upd-'));
       const tarPath = path.join(tmpDir, tarAsset.name);
       fs.writeFileSync(tarPath, tarBuf);
-      const tarBin = process.platform === 'win32' ? 'tar.exe' : 'tar';
-      await execFileAsync(tarBin, ['-xzf', tarPath, '-C', tmpDir]);
+      // Windows 一律使用系統內建 bsdtar（System32\tar.exe）：避免 PATH 中 Git Bash 的 GNU tar 無法解析 C:\ 路徑
+      const systemTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+      const tarBin = process.platform === 'win32' ? (fs.existsSync(systemTar) ? systemTar : 'tar.exe') : 'tar';
+      await execFileAsync(tarBin, ['-xzf', tarPath, '-C', tmpDir], { windowsHide: true });
 
       const extractedDir = path.join(tmpDir, 'agy-git-graph');
       const sourceDir = fs.existsSync(extractedDir) ? extractedDir : tmpDir;
@@ -1240,9 +1298,9 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
         restarting: !isDevRepo
       });
 
-      // 非開發模式下，延遲 400ms 退出程序，由 AGY (restart_policy: always) 自動拉起新版伺服器
+      // 非開發模式下，延遲 400ms 後重啟為新版：AGY 模式交給 AGY 重新拉起，獨立模式自行重啟
       if (!isDevRepo) {
-        setTimeout(() => process.exit(0), 400);
+        setTimeout(restartSelf, 400);
       }
       return;
     } catch (err) {
@@ -1300,7 +1358,52 @@ const commitLogCache = new Map(); // key -> { timestamp, data }
 });
 
 const PORT = getPort();
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[Git Graph Sidecar] Server running on http://127.0.0.1:${PORT}`);
-  console.log(`[Git Graph Sidecar] Target repository: ${currentRepoPath}`);
-});
+
+// 重啟為新版伺服器
+function restartSelf() {
+  if (IS_AGY_MANAGED) {
+    process.exit(0); // AGY (restart_policy: always) 會自動拉起新版
+    return;
+  }
+  // 獨立模式：先停止監聽、釋放埠號，再以相同參數啟動一個脫離目前程序的新伺服器，最後結束自己
+  let respawned = false;
+  const respawn = () => {
+    if (respawned) return;
+    respawned = true;
+    try {
+      const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+        cwd: process.cwd(),
+        env: process.env,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+    } catch (err) {
+      console.error('[Git Graph Sidecar] Failed to respawn:', err.message);
+    }
+    setTimeout(() => process.exit(0), 100);
+  };
+  server.close(respawn);
+  if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+  setTimeout(respawn, 1500); // 保險：連線未能及時關閉時仍繼續重啟
+}
+
+// 監聽埠號：若舊程序尚未釋放（自我重啟時），每 300ms 重試，最多約 10 秒
+function startListening(attempt = 0) {
+  server.once('error', (err) => {
+    if (err && err.code === 'EADDRINUSE' && attempt < 33) {
+      setTimeout(() => startListening(attempt + 1), 300);
+      return;
+    }
+    console.error('[Git Graph Sidecar] Failed to listen:', err && err.message);
+    process.exit(1);
+  });
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`[Git Graph Sidecar] Server running on http://127.0.0.1:${PORT} (${IS_AGY_MANAGED ? 'AGY' : 'standalone'})`);
+    console.log(`[Git Graph Sidecar] Target repository: ${currentRepoPath}`);
+  });
+}
+
+syncClaudeSkill();
+startListening();

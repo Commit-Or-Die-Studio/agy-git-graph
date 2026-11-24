@@ -58,13 +58,14 @@ agy-git-graph/
 ├── TODO.md                     # 待辦事項與 v2.0.0 跨平台規劃
 ├── LICENSE                     # MIT License
 ├── .claude/
-│   └── launch.json             # Claude 桌面版瀏覽器窗格啟動設定（git-graph 伺服器，埠 52899）
+│   └── launch.json             # 開發用：在 Claude 瀏覽器窗格預覽工作區版本（埠 52897）
 ├── assets/
 │   └── logo.svg                # 外掛專屬圖示
 ├── sidecars/
 │   └── git_graph_server/       # Sidecar 核心伺服器與前端 UI
 │       ├── sidecar.json        # AGY Sidecar 描述設定檔 (AUX_PANE 進入點)
 │       ├── server.mjs          # Node.js 輕量 HTTP 伺服器與 Git 解析器
+│       ├── claude-open.mjs     # Claude /git-graph 啟動腳本（檢查 / 啟動獨立伺服器並輸出 ?repo= 網址）
 │       └── public/             # 前端介面 (HTML5 / CSS / SVG)
 │           ├── index.html      # 主頁面
 │           ├── style.css       # 暗色系響應式樣式
@@ -72,6 +73,8 @@ agy-git-graph/
 ├── scripts/
 │   ├── package.mjs             # 跨平台發行打包腳本 (支援 --next 預覽打包與自動生成 Release Notes)
 │   └── installer.cs            # Windows 原生自解壓安裝/解除安裝器 C# 原始碼
+├── claude/
+│   └── skills/git-graph/SKILL.md # Claude 桌面版 /git-graph 技能（由安裝檔與伺服器同步至 ~/.claude/skills）
 ├── skills/
 │   ├── local-package/SKILL.md  # 本機下一版本測試打包技能
 │   └── release/SKILL.md        # 正式壓版與 GitHub Release 自動發布技能
@@ -94,18 +97,22 @@ agy-git-graph/
 
 安裝完成後，重啟或重新整理 Antigravity (AGY)，於右側輔助面板開啟 **Git Graph** 即可使用。
 
-### 在 Claude 桌面版使用（瀏覽器窗格）
-Git Graph 的畫面本身是一個本機網頁，可直接在 **Claude 桌面版 Code 分頁內建的瀏覽器窗格**開啟，畫面與功能和 AGY 完全一致，不需另外切換視窗：
+### 在 Claude 桌面版使用（`/git-graph`）
+Git Graph 的畫面本身是一個本機網頁，可直接在 **Claude 桌面版 Code 分頁內建的瀏覽器窗格**開啟，畫面與功能和 AGY 完全一致，不需另外切換視窗。
 
-1. 專案內的 [`.claude/launch.json`](.claude/launch.json) 已設定以 `node` 在 `52899` 埠啟動 `server.mjs`（與 AGY 自己的 Sidecar 埠號錯開）。
-2. 在 Claude 對話中要求開啟 Git Graph（或以 App 的預覽功能啟動 `git-graph` 設定），再於瀏覽器窗格開啟：
-   ```text
-   http://localhost:52899/?repo=<目前 Session 的專案資料夾>
-   ```
+**安裝**：同一個安裝檔會一併處理 Claude，不需另外設定：
+* `setup.exe` / `setup.sh` 偵測到已安裝 Claude（存在 `~/.claude`，或 `CLAUDE_CONFIG_DIR` 指定的目錄）時，會把 `/git-graph` 技能安裝到 `~/.claude/skills/git-graph/`。
+* 從舊版本以 AGY 面板的一鍵更新升級時，新版伺服器啟動後也會自動補裝 / 更新此技能。
+* 只會覆寫帶有本外掛標記的技能檔，不會動到使用者自己建立的同名技能；解除安裝時一併移除。
 
-* **每個 Session 各自獨立**：與 AGY 相同，後端伺服器共用一個，每個 Session 的畫面各自帶 `?repo=` 指定自己的倉庫；開啟後即顯示該 Session 專案的 Git，不會沿用其他畫面記住的倉庫。
-* 網址未帶 `?repo=` 時維持原本行為（沿用上次選擇的倉庫，或依 AGY 對話自動偵測）。
-* 需要電腦上已安裝 Node.js。
+**使用**：在任何專案的 Claude Session 中輸入 `/git-graph`（或直接要求「開 Git Graph」），右側瀏覽器窗格就會開啟該 Session 專案的 Git Graph。
+
+**運作方式**：
+* 技能會執行已安裝外掛中的 `sidecars/git_graph_server/claude-open.mjs`：若 `52899` 埠尚未有伺服器（或執行中的是舊版），就以**不屬於任何 Session 的獨立背景程序**啟動 `server.mjs`，再開啟 `http://localhost:52899/?repo=<Session 專案資料夾>`。
+* **每個 Session 各自獨立**：與 AGY 相同，後端伺服器共用一個，每個 Session 的畫面各自以 `?repo=` 指定自己的倉庫；關閉任何一個 Session 都不會中斷其他 Session。
+* **與 AGY 互不影響**：AGY 的 Sidecar 由 AGY 自己管理（不同埠號、不同程序），兩邊使用同一份已安裝的程式碼，但各自啟動、各自關閉。
+* **一鍵更新自動重啟**：在 Claude 窗格中按版本更新時，獨立模式的伺服器會先釋放埠號，再自行啟動新版並結束舊程序；頁面會等新版伺服器回應後才重新載入。AGY 模式則照舊交由 AGY 重新拉起。
+* 需要電腦上已安裝 Node.js；網址未帶 `?repo=` 時維持原本行為（沿用上次選擇的倉庫，或依 AGY 對話自動偵測）。
 
 ---
 
